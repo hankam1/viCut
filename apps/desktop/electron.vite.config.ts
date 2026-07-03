@@ -4,10 +4,11 @@ import { defineConfig, externalizeDepsPlugin } from "electron-vite";
 
 export default defineConfig({
   main: {
-    plugins: [externalizeDepsPlugin()],
+    // Движок бандлится в main — в пакете приложения нет node_modules.
+    plugins: [externalizeDepsPlugin({ exclude: ["@vicut/core", "zod"] })],
   },
   preload: {
-    plugins: [externalizeDepsPlugin()],
+    plugins: [externalizeDepsPlugin({ exclude: ["@vicut/core", "zod"] })],
   },
   renderer: {
     plugins: [react(), tailwindcss()],
