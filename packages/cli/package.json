@@ -1,0 +1,28 @@
+{
+  "name": "@vicut/cli",
+  "version": "0.1.0",
+  "description": "ViCut command-line interface",
+  "license": "MIT",
+  "type": "module",
+  "bin": {
+    "vicut": "dist/index.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "dev": "tsx src/index.ts"
+  },
+  "dependencies": {
+    "@vicut/core": "workspace:*",
+    "commander": "^14.0.0",
+    "picocolors": "^1.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.9.0"
+  }
+}
