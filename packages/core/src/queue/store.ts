@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import Database from "better-sqlite3";
+import { DatabaseSync } from "node:sqlite";
 import { dataDir } from "../platform/paths.js";
 import { presetSchema, type Preset } from "../preset/schema.js";
 
@@ -61,15 +61,19 @@ function rowToJob(row: JobRow): QueueJob {
   };
 }
 
-/** Persistent render queue — jobs survive restarts and crashes. */
+/**
+ * Persistent render queue — jobs survive restarts and crashes.
+ * Uses node:sqlite (built into Node 22.5+ and Electron), so the same code
+ * runs in the CLI and in the Electron main process without native rebuilds.
+ */
 export class QueueStore {
-  private readonly db: Database.Database;
+  private readonly db: DatabaseSync;
 
   constructor(dbPath?: string) {
     const file = dbPath ?? path.join(dataDir(), "queue.db");
     fs.mkdirSync(path.dirname(file), { recursive: true });
-    this.db = new Database(file);
-    this.db.pragma("journal_mode = WAL");
+    this.db = new DatabaseSync(file);
+    this.db.exec("PRAGMA journal_mode = WAL;");
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS jobs (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -97,19 +101,21 @@ export class QueueStore {
   }
 
   get(id: number): QueueJob | null {
-    const row = this.db.prepare(`SELECT * FROM jobs WHERE id = ?`).get(id) as JobRow | undefined;
+    const row = this.db.prepare(`SELECT * FROM jobs WHERE id = ?`).get(id) as unknown as
+      | JobRow
+      | undefined;
     return row ? rowToJob(row) : null;
   }
 
   list(): QueueJob[] {
-    const rows = this.db.prepare(`SELECT * FROM jobs ORDER BY id`).all() as JobRow[];
+    const rows = this.db.prepare(`SELECT * FROM jobs ORDER BY id`).all() as unknown as JobRow[];
     return rows.map(rowToJob);
   }
 
   nextPending(): QueueJob | null {
     const row = this.db
       .prepare(`SELECT * FROM jobs WHERE status = 'pending' ORDER BY id LIMIT 1`)
-      .get() as JobRow | undefined;
+      .get() as unknown as JobRow | undefined;
     return row ? rowToJob(row) : null;
   }
 
@@ -144,12 +150,23 @@ export class QueueStore {
       .run(error, id);
   }
 
+  /** Requeue a failed job. */
+  retry(id: number): boolean {
+    const result = this.db
+      .prepare(
+        `UPDATE jobs SET status = 'pending', stage = NULL, progress = 0, error = NULL,
+         finished_at = NULL WHERE id = ? AND status = 'failed'`,
+      )
+      .run(id);
+    return Number(result.changes) > 0;
+  }
+
   /** Cancel a job that has not started yet. */
   cancel(id: number): boolean {
     const result = this.db
       .prepare(`UPDATE jobs SET status = 'canceled' WHERE id = ? AND status = 'pending'`)
       .run(id);
-    return result.changes > 0;
+    return Number(result.changes) > 0;
   }
 
   /** Remove a job unless it is currently running. */
@@ -157,7 +174,7 @@ export class QueueStore {
     const result = this.db
       .prepare(`DELETE FROM jobs WHERE id = ? AND status != 'running'`)
       .run(id);
-    return result.changes > 0;
+    return Number(result.changes) > 0;
   }
 
   /** Remove finished (done/failed/canceled) jobs; returns how many. */
@@ -165,7 +182,7 @@ export class QueueStore {
     const result = this.db
       .prepare(`DELETE FROM jobs WHERE status IN ('done', 'failed', 'canceled')`)
       .run();
-    return result.changes;
+    return Number(result.changes);
   }
 
   /** Jobs left "running" by a crash get requeued. Call on startup. */
@@ -173,7 +190,7 @@ export class QueueStore {
     const result = this.db
       .prepare(`UPDATE jobs SET status = 'pending', stage = NULL, progress = 0 WHERE status = 'running'`)
       .run();
-    return result.changes;
+    return Number(result.changes);
   }
 
   close(): void {
