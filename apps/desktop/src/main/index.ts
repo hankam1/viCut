@@ -45,6 +45,13 @@ function createWindow(): void {
       win.webContents.send("debug:open-wizard", debugWizard.split(";").filter(Boolean));
     });
   }
+  // Отладочный запуск на конкретном экране: VICUT_OPEN_VIEW=presets|settings
+  const debugView = process.env["VICUT_OPEN_VIEW"];
+  if (debugView) {
+    win.webContents.once("did-finish-load", () => {
+      win.webContents.send("debug:open-view", debugView);
+    });
+  }
 
   if (rendererUrl) win.loadURL(rendererUrl);
   else void win.loadFile(path.join(import.meta.dirname, "../renderer/index.html"));

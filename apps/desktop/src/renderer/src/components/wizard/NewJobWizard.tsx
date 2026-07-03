@@ -115,6 +115,13 @@ export function NewJobWizard({
     }
   }, [initialFiles]);
 
+  // Папка вывода по умолчанию из настроек (если задана).
+  useEffect(() => {
+    void window.vicut.config.get().then((config) => {
+      if (config.defaultOutputDir) setOutputDir(config.defaultOutputDir);
+    });
+  }, []);
+
   useEffect(() => {
     void window.vicut.presets.list().then(({ builtins, user }) => {
       const all = [...user, ...builtins];

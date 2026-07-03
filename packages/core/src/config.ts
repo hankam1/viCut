@@ -6,6 +6,8 @@ import { dataDir } from "./platform/paths.js";
 export const configSchema = z.object({
   groqApiKey: z.string().optional(),
   openaiApiKey: z.string().optional(),
+  /** Папка вывода по умолчанию для новых задач (используется приложением). */
+  defaultOutputDir: z.string().optional(),
 });
 
 export type Config = z.infer<typeof configSchema>;

@@ -5,7 +5,9 @@ import {
   applyOutputOverrides,
   builtinPreset,
   builtinPresetNames,
+  ensureModel,
   ensureTools,
+  ensureWhisper,
   listUserPresets,
   loadConfig,
   loadPreset,
@@ -20,6 +22,7 @@ import {
   saveConfig,
   savePreset,
   type Config,
+  type DownloadProgress,
   type OutputOverrides,
   type Preset,
   type Tools,
@@ -184,6 +187,22 @@ export function registerEngineIpc(): void {
   ipcMain.handle("probe:file", async (_event, filePath: string) => {
     tools ??= await ensureTools();
     return probe(filePath, tools.ffprobe.path);
+  });
+
+  // ── Установка инструментов (онбординг / настройки) ──
+  const setupProgress =
+    (kind: string) =>
+    (p: DownloadProgress): void =>
+      broadcast("setup:progress", { kind, ...p });
+
+  ipcMain.handle("setup:ffmpeg", async (_event, force?: boolean) => {
+    tools = await ensureTools({ force, onProgress: setupProgress("ffmpeg") });
+    return { ffmpeg: tools.ffmpeg, ffprobe: tools.ffprobe };
+  });
+  ipcMain.handle("setup:whisper", async (_event, model: string) => {
+    const whisperPath = await ensureWhisper(setupProgress("whisper"));
+    const modelFile = await ensureModel(model, setupProgress("model"));
+    return { whisperPath, modelFile };
   });
 
   // ── Диалоги и shell ──

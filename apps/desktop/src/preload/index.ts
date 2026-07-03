@@ -41,7 +41,9 @@ const EVENT_CHANNELS = [
   "queue:job-progress",
   "queue:job-finished",
   "queue:running-changed",
+  "setup:progress",
   "debug:open-wizard",
+  "debug:open-view",
 ] as const;
 
 type EventChannel = (typeof EVENT_CHANNELS)[number];
@@ -84,6 +86,12 @@ const api = {
   },
   tools: {
     status: (): Promise<ToolsStatus> => ipcRenderer.invoke("tools:status"),
+  },
+  setup: {
+    ffmpeg: (force?: boolean): Promise<{ ffmpeg: ToolLocation; ffprobe: ToolLocation }> =>
+      ipcRenderer.invoke("setup:ffmpeg", force),
+    whisper: (model: string): Promise<{ whisperPath: string; modelFile: string }> =>
+      ipcRenderer.invoke("setup:whisper", model),
   },
   probeFile: (path: string): Promise<MediaInfo> => ipcRenderer.invoke("probe:file", path),
   dialog: {

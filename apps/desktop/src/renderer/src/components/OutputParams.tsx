@@ -29,6 +29,17 @@ export const RESOLUTION_HEIGHTS: Record<Exclude<ResolutionKey, "source">, number
   "2160p": 2160,
 };
 
+export const RESOLUTION_DIMS: Record<
+  Exclude<ResolutionKey, "source">,
+  { width: number; height: number }
+> = {
+  "480p": { width: 854, height: 480 },
+  "720p": { width: 1280, height: 720 },
+  "1080p": { width: 1920, height: 1080 },
+  "1440p": { width: 2560, height: 1440 },
+  "2160p": { width: 3840, height: 2160 },
+};
+
 /** Значения OutputParams, унаследованные из пресета. */
 export function paramsFromPreset(preset: Preset): OutputParamsValue {
   const res = preset.output.resolution;
