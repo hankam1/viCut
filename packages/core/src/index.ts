@@ -51,11 +51,13 @@ export {
 } from "./render/encoders.js";
 export {
   buildGraph,
+  computeTargetSpec,
   escapeFilterPath,
   RenderError,
   type BuiltGraph,
   type BuildGraphOptions,
   type LoudnormMeasured,
+  type TargetSpec,
 } from "./render/graph.js";
 export {
   renderJob,
@@ -85,3 +87,6 @@ export {
 } from "./transcribe/whisperLocal.js";
 export { API_PROVIDERS, type ApiProviderName } from "./transcribe/api.js";
 export { segmentsToSrt } from "./subtitles/srt.js";
+export { segmentsToAss, type AssRenderOptions } from "./subtitles/ass.js";
+export { QueueStore, type QueueJob, type JobStatus, type AddJobInput } from "./queue/store.js";
+export { runQueue, type QueueRunEvents, type QueueRunSummary } from "./queue/runner.js";

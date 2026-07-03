@@ -4,6 +4,7 @@ import pc from "picocolors";
 import { registerConfig } from "./commands/config.js";
 import { registerPreset } from "./commands/preset.js";
 import { registerProbe } from "./commands/probe.js";
+import { registerQueue } from "./commands/queue.js";
 import { registerRender } from "./commands/render.js";
 import { registerSetup } from "./commands/setup.js";
 import { registerTranscribe } from "./commands/transcribe.js";
@@ -21,6 +22,7 @@ registerPreset(program);
 registerConfig(program);
 registerRender(program);
 registerTranscribe(program);
+registerQueue(program);
 
 program.parseAsync().catch((error: unknown) => {
   console.error(pc.red("Error:"), error instanceof Error ? error.message : error);
