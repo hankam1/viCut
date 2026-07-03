@@ -38,18 +38,18 @@ function createWindow(): void {
 
   win.once("ready-to-show", () => win.show());
 
-  // Отладочный запуск с открытым мастером: VICUT_OPEN_WIZARD="a.mp4;b.mp4"
+  // Отладочный запуск: VICUT_OPEN_WIZARD="a.mp4;b.mp4", VICUT_OPEN_VIEW=presets|settings.
+  // Задержка — рендерер подписывается на события после проверки инструментов.
   const debugWizard = process.env["VICUT_OPEN_WIZARD"];
-  if (debugWizard) {
-    win.webContents.once("did-finish-load", () => {
-      win.webContents.send("debug:open-wizard", debugWizard.split(";").filter(Boolean));
-    });
-  }
-  // Отладочный запуск на конкретном экране: VICUT_OPEN_VIEW=presets|settings
   const debugView = process.env["VICUT_OPEN_VIEW"];
-  if (debugView) {
+  if (debugWizard || debugView) {
     win.webContents.once("did-finish-load", () => {
-      win.webContents.send("debug:open-view", debugView);
+      setTimeout(() => {
+        if (debugWizard) {
+          win.webContents.send("debug:open-wizard", debugWizard.split(";").filter(Boolean));
+        }
+        if (debugView) win.webContents.send("debug:open-view", debugView);
+      }, 1500);
     });
   }
 

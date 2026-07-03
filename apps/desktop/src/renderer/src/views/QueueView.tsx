@@ -6,12 +6,9 @@ import { Mark } from "../components/Mark.js";
 import { NewJobWizard } from "../components/wizard/NewJobWizard.js";
 import { useQueue } from "../hooks/useQueue.js";
 
-const VIDEO_EXT = new Set(["mp4", "mov", "mkv", "avi", "webm", "m4v", "mts", "ts"]);
-
-function videoPathsFromDrop(files: FileList): string[] {
-  return Array.from(files)
-    .map((file) => window.vicut.getPathForFile(file))
-    .filter((p) => VIDEO_EXT.has(p.split(".").pop()?.toLowerCase() ?? ""));
+/** Пути из drag&drop — классификацию (аудио/клипы/картинки/папки) делает мастер. */
+function pathsFromDrop(files: FileList): string[] {
+  return Array.from(files).map((file) => window.vicut.getPathForFile(file));
 }
 
 export function QueueView() {
@@ -45,7 +42,7 @@ export function QueueView() {
     (event: React.DragEvent) => {
       event.preventDefault();
       setDragOver(false);
-      addInputs(videoPathsFromDrop(event.dataTransfer.files));
+      addInputs(pathsFromDrop(event.dataTransfer.files));
     },
     [addInputs],
   );
@@ -137,7 +134,7 @@ export function QueueView() {
           onSubmit={(payload) => {
             setWizardFiles(null);
             void window.vicut.queue.add({
-              inputs: payload.inputs,
+              spec: payload.spec,
               output: payload.output,
               presetName: payload.presetName,
               title: payload.title,

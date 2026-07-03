@@ -1,10 +1,22 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ArrowRightLeft, Captions, FolderOpen, GripVertical, Volume2, X } from "lucide-react";
-import type { Preset } from "@vicut/core";
+import {
+  ArrowRightLeft,
+  Captions,
+  FolderOpen,
+  GripVertical,
+  Images,
+  Music,
+  Plus,
+  Trash2,
+  Volume2,
+  X,
+} from "lucide-react";
+import type { JobSpec, Preset } from "@vicut/core";
 import { basename, dirname, formatDuration, stripExtension } from "../../lib/format.js";
 import { Button } from "../Button.js";
 import { Modal } from "../Modal.js";
 import { Segmented } from "../Segmented.js";
+import { useToast } from "../toast.js";
 import {
   OutputParams,
   paramsFromPreset,
@@ -12,11 +24,21 @@ import {
   type OutputParamsValue,
 } from "../OutputParams.js";
 
-interface WizardFile {
+type JobType = "stitch" | "audio";
+
+interface WFile {
   path: string;
   durationSec: number | null;
-  height: number | null;
 }
+
+interface WSection {
+  id: number;
+  audio: WFile | null;
+  kind: "clips" | "images" | null;
+  visuals: WFile[];
+}
+
+let nextSectionId = 1;
 
 function StepIndicator({ step }: { step: 1 | 2 }) {
   return (
@@ -66,6 +88,37 @@ function PresetCard({
   );
 }
 
+/** Живой расчёт тайминга секции (ключевая обратная связь типа B). */
+function sectionTiming(section: WSection): { text: string; warn: string | null } | null {
+  const audioDur = section.audio?.durationSec;
+  if (!audioDur || section.visuals.length === 0) return null;
+  const n = section.visuals.length;
+
+  if (section.kind === "images") {
+    const per = audioDur / n;
+    return {
+      text: `${n} картин${n === 1 ? "ка" : n < 5 ? "ки" : "ок"} → по ${per.toFixed(1)} сек · итого ${formatDuration(audioDur)}`,
+      warn: per < 0.3 ? "меньше 0.3 сек на картинку — будет мельтешить" : null,
+    };
+  }
+
+  if (section.visuals.some((v) => v.durationSec === null)) {
+    return { text: "считаем длительности…", warn: null };
+  }
+  const total = section.visuals.reduce((sum, v) => sum + (v.durationSec ?? 0), 0);
+  const speed = total / audioDur;
+  const action = speed >= 1 ? "ускорение" : "замедление";
+  return {
+    text: `${n} клип${n === 1 ? "" : n < 5 ? "а" : "ов"} · ${formatDuration(total)} → ${action} ×${speed.toFixed(2)}, чтобы уложиться в ${formatDuration(audioDur)}`,
+    warn:
+      speed > 2
+        ? `ускорение ×${speed.toFixed(1)} — клипы будут заметно быстрее`
+        : speed < 0.5
+          ? `замедление ×${speed.toFixed(1)} — клипы будут заметно медленнее`
+          : null,
+  };
+}
+
 export function NewJobWizard({
   initialFiles,
   initialStep = 1,
@@ -76,17 +129,18 @@ export function NewJobWizard({
   initialStep?: 1 | 2;
   onClose: () => void;
   onSubmit: (payload: {
-    inputs: string[];
+    spec: JobSpec;
     output: string;
     presetName: string;
     title: string;
     overrides: Partial<OutputParamsValue>;
   }) => void;
 }) {
+  const toast = useToast();
   const [step, setStep] = useState<1 | 2>(initialStep);
-  const [files, setFiles] = useState<WizardFile[]>(
-    initialFiles.map((path) => ({ path, durationSec: null, height: null })),
-  );
+  const [jobType, setJobType] = useState<JobType>("stitch");
+  const [clips, setClips] = useState<WFile[]>([]);
+  const [sections, setSections] = useState<WSection[]>([]);
   const [presets, setPresets] = useState<Preset[]>([]);
   const [presetName, setPresetName] = useState<string>("youtube");
   const [params, setParams] = useState<OutputParamsValue | null>(null);
@@ -96,23 +150,61 @@ export function NewJobWizard({
     initialFiles[0] ? `${stripExtension(basename(initialFiles[0]))} — vicut` : "vicut",
   );
   const dragIndex = useRef<number | null>(null);
+  const [maxSourceHeight, setMaxSourceHeight] = useState<number | null>(null);
 
-  // Метаданные клипов — длительность и высота кадра (для апскейл-подсказки).
+  /** Длительность файла подтягивается асинхронно и во все места сразу. */
+  const probeDuration = (filePath: string): void => {
+    void window.vicut
+      .probeFile(filePath)
+      .then((info) => {
+        const height = info.video?.height;
+        if (height) setMaxSourceHeight((prev) => Math.max(prev ?? 0, height));
+        const patch = (f: WFile): WFile =>
+          f.path === filePath ? { ...f, durationSec: info.durationSec } : f;
+        setClips((prev) => prev.map(patch));
+        setSections((prev) =>
+          prev.map((s) => ({
+            ...s,
+            audio: s.audio ? patch(s.audio) : null,
+            visuals: s.visuals.map(patch),
+          })),
+        );
+      })
+      .catch(() => undefined);
+  };
+
+  const makeFiles = (paths: string[], probe: boolean): WFile[] =>
+    paths.map((p) => {
+      if (probe) probeDuration(p);
+      return { path: p, durationSec: null };
+    });
+
+  // Разбор брошенных файлов: аудио есть → тип B с черновой раскладкой секций.
   useEffect(() => {
-    for (const file of initialFiles) {
-      void window.vicut
-        .probeFile(file)
-        .then((info) => {
-          setFiles((prev) =>
-            prev.map((f) =>
-              f.path === file
-                ? { ...f, durationSec: info.durationSec, height: info.video?.height ?? null }
-                : f,
-            ),
-          );
-        })
-        .catch(() => undefined);
-    }
+    void window.vicut.media.classify(initialFiles).then(({ audios, clips: vids, images }) => {
+      setClips(makeFiles(vids, true));
+      if (audios.length > 0) {
+        const drafts: WSection[] = audios.map((audio) => ({
+          id: nextSectionId++,
+          audio: makeFiles([audio], true)[0]!,
+          kind: null,
+          visuals: [],
+        }));
+        if (drafts.length >= 2 && vids.length > 0 && images.length > 0) {
+          drafts[0]! = { ...drafts[0]!, kind: "clips", visuals: makeFiles(vids, true) };
+          drafts[1]! = { ...drafts[1]!, kind: "images", visuals: makeFiles(images, false) };
+        } else if (vids.length > 0) {
+          drafts[0]! = { ...drafts[0]!, kind: "clips", visuals: makeFiles(vids, true) };
+        } else if (images.length > 0) {
+          drafts[0]! = { ...drafts[0]!, kind: "images", visuals: makeFiles(images, false) };
+        }
+        setSections(drafts);
+        setJobType("audio");
+      } else {
+        setSections([{ id: nextSectionId++, audio: null, kind: null, visuals: [] }]);
+      }
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [initialFiles]);
 
   // Папка вывода по умолчанию из настроек (если задана).
@@ -138,7 +230,6 @@ export function NewJobWizard({
 
   const selectPreset = (preset: Preset): void => {
     setPresetName(preset.name);
-    // Непереопределённые поля следуют за пресетом, переопределённые остаются.
     setParams((prev) => {
       const base = paramsFromPreset(preset);
       if (!prev) return base;
@@ -172,16 +263,12 @@ export function NewJobWizard({
     });
   };
 
-  const totalDuration = files.reduce((sum, f) => sum + (f.durationSec ?? 0), 0);
-  const probedAll = files.every((f) => f.durationSec !== null);
-  const maxSourceHeight = files.reduce<number | null>(
-    (max, f) => (f.height !== null ? Math.max(max ?? 0, f.height) : max),
-    null,
-  );
-
-  const reorder = (from: number, to: number): void => {
+  /* ── Тип A ── */
+  const totalClipsDuration = clips.reduce((sum, f) => sum + (f.durationSec ?? 0), 0);
+  const probedAll = clips.every((f) => f.durationSec !== null);
+  const reorderClips = (from: number, to: number): void => {
     if (from === to) return;
-    setFiles((prev) => {
+    setClips((prev) => {
       const next = [...prev];
       const [moved] = next.splice(from, 1);
       next.splice(to, 0, moved!);
@@ -189,14 +276,65 @@ export function NewJobWizard({
     });
   };
 
+  /* ── Тип B ── */
+  const patchSection = (id: number, patch: Partial<WSection>): void => {
+    setSections((prev) => prev.map((s) => (s.id === id ? { ...s, ...patch } : s)));
+  };
+
+  const addSectionAudio = (id: number): void => {
+    void window.vicut.dialog.pickAudio().then((audio) => {
+      if (audio) patchSection(id, { audio: makeFiles([audio], true)[0]! });
+    });
+  };
+
+  const addSectionVisuals = (section: WSection, viaFolder: boolean): void => {
+    const pick = viaFolder
+      ? window.vicut.dialog.pickFolder().then((dir) => (dir ? [dir] : []))
+      : window.vicut.dialog.pickVisuals();
+    void pick.then(async (paths) => {
+      if (paths.length === 0) return;
+      const { clips: vids, images } = await window.vicut.media.classify(paths);
+      const incomingKind = vids.length >= images.length ? "clips" : "images";
+      const incoming = incomingKind === "clips" ? vids : images;
+      if (vids.length > 0 && images.length > 0) {
+        toast("В одной секции — либо клипы, либо картинки");
+        return;
+      }
+      if (section.kind && section.kind !== incomingKind && section.visuals.length > 0) {
+        toast(`В этой секции уже ${section.kind === "clips" ? "клипы" : "картинки"}`);
+        return;
+      }
+      patchSection(section.id, {
+        kind: incomingKind,
+        visuals: [...section.visuals, ...makeFiles(incoming, incomingKind === "clips")],
+      });
+    });
+  };
+
+  const sectionsReady =
+    sections.length > 0 &&
+    sections.every((s) => s.audio?.durationSec != null && s.visuals.length > 0);
+
+  const canProceed = jobType === "stitch" ? clips.length > 0 : sectionsReady;
+
   const submit = (): void => {
     if (!params || !selectedPreset) return;
     const overrides: Partial<OutputParamsValue> = {};
     for (const field of overridden) {
       (overrides as Record<OutputField, unknown>)[field] = params[field];
     }
+    const spec: JobSpec =
+      jobType === "stitch"
+        ? { kind: "stitch", inputs: clips.map((f) => f.path) }
+        : {
+            kind: "audio-driven",
+            sections: sections.map((s) => ({
+              audio: s.audio!.path,
+              visuals: { kind: s.kind ?? "clips", files: s.visuals.map((f) => f.path) },
+            })),
+          };
     onSubmit({
-      inputs: files.map((f) => f.path),
+      spec,
       output: `${outputDir}\\${outputName}.mp4`,
       presetName: selectedPreset.name,
       title: outputName,
@@ -208,7 +346,7 @@ export function NewJobWizard({
     <Modal title="Новая задача" header={<StepIndicator step={step} />} onClose={onClose}
       footer={
         step === 1 ? (
-          <Button variant="primary" disabled={files.length === 0} onClick={() => setStep(2)}>
+          <Button variant="primary" disabled={!canProceed} onClick={() => setStep(2)}>
             Далее
           </Button>
         ) : (
@@ -228,48 +366,184 @@ export function NewJobWizard({
           <Segmented
             options={[
               { value: "stitch" as const, label: "Склейка клипов" },
-              { value: "audio" as const, label: "Сборка под аудио · скоро" },
+              { value: "audio" as const, label: "Сборка под аудио" },
             ]}
-            value={"stitch" as "stitch" | "audio"}
-            onChange={() => undefined}
+            value={jobType}
+            onChange={setJobType}
           />
-          <div className="flex flex-col gap-1.5">
-            {files.map((file, index) => (
-              <div
-                key={file.path}
-                draggable
-                onDragStart={() => (dragIndex.current = index)}
-                onDragOver={(event) => {
-                  event.preventDefault();
-                  if (dragIndex.current !== null && dragIndex.current !== index) {
-                    reorder(dragIndex.current, index);
-                    dragIndex.current = index;
-                  }
-                }}
-                onDragEnd={() => (dragIndex.current = null)}
-                className="flex cursor-grab items-center gap-2.5 rounded-md border border-border bg-surface-2 px-2.5 py-2 active:cursor-grabbing"
-              >
-                <GripVertical size={14} strokeWidth={1.5} className="shrink-0 text-faint" />
-                <span className="tnum w-5 shrink-0 text-[11.5px] text-faint">{index + 1}</span>
-                <span className="min-w-0 flex-1 truncate text-[12.5px]">{basename(file.path)}</span>
-                <span className="tnum shrink-0 text-[11.5px] text-muted">
-                  {file.durationSec !== null ? formatDuration(file.durationSec) : "…"}
-                </span>
-                <button
-                  type="button"
-                  aria-label="Убрать клип"
-                  onClick={() => setFiles((prev) => prev.filter((_, i) => i !== index))}
-                  className="flex h-5 w-5 shrink-0 items-center justify-center rounded text-faint hover:text-danger"
-                >
-                  <X size={13} strokeWidth={1.5} />
-                </button>
+
+          {jobType === "stitch" ? (
+            <>
+              <div className="flex flex-col gap-1.5">
+                {clips.map((file, index) => (
+                  <div
+                    key={file.path}
+                    draggable
+                    onDragStart={() => (dragIndex.current = index)}
+                    onDragOver={(event) => {
+                      event.preventDefault();
+                      if (dragIndex.current !== null && dragIndex.current !== index) {
+                        reorderClips(dragIndex.current, index);
+                        dragIndex.current = index;
+                      }
+                    }}
+                    onDragEnd={() => (dragIndex.current = null)}
+                    className="flex cursor-grab items-center gap-2.5 rounded-md border border-border bg-surface-2 px-2.5 py-2 active:cursor-grabbing"
+                  >
+                    <GripVertical size={14} strokeWidth={1.5} className="shrink-0 text-faint" />
+                    <span className="tnum w-5 shrink-0 text-[11.5px] text-faint">{index + 1}</span>
+                    <span className="min-w-0 flex-1 truncate text-[12.5px]">{basename(file.path)}</span>
+                    <span className="tnum shrink-0 text-[11.5px] text-muted">
+                      {file.durationSec !== null ? formatDuration(file.durationSec) : "…"}
+                    </span>
+                    <button
+                      type="button"
+                      aria-label="Убрать клип"
+                      onClick={() => setClips((prev) => prev.filter((_, i) => i !== index))}
+                      className="flex h-5 w-5 shrink-0 items-center justify-center rounded text-faint hover:text-danger"
+                    >
+                      <X size={13} strokeWidth={1.5} />
+                    </button>
+                  </div>
+                ))}
               </div>
-            ))}
-          </div>
-          <div className="text-[12px] text-muted">
-            {files.length} клип{files.length === 1 ? "" : files.length < 5 ? "а" : "ов"}
-            {probedAll && files.length > 0 ? ` · ${formatDuration(totalDuration)}` : ""}
-          </div>
+              <div className="text-[12px] text-muted">
+                {clips.length} клип{clips.length === 1 ? "" : clips.length < 5 ? "а" : "ов"}
+                {probedAll && clips.length > 0 ? ` · ${formatDuration(totalClipsDuration)}` : ""}
+              </div>
+            </>
+          ) : (
+            <div className="flex flex-col gap-2.5">
+              {sections.map((section, index) => {
+                const timing = sectionTiming(section);
+                const missingAudio = !section.audio;
+                const missingVisuals = section.visuals.length === 0;
+                return (
+                  <div
+                    key={section.id}
+                    className={`flex flex-col gap-2.5 rounded-lg border p-3 ${
+                      missingAudio || missingVisuals ? "border-warning/40" : "border-border"
+                    } bg-surface-2`}
+                  >
+                    <div className="flex items-center gap-2">
+                      <span className="text-[12px] font-medium">Секция {index + 1}</span>
+                      {section.kind && (
+                        <span className="rounded-pill bg-surface px-2 py-0.5 text-[11px] text-muted">
+                          {section.kind === "clips" ? "клипы" : "картинки"}
+                        </span>
+                      )}
+                      <button
+                        type="button"
+                        aria-label="Удалить секцию"
+                        onClick={() =>
+                          setSections((prev) => prev.filter((s) => s.id !== section.id))
+                        }
+                        className="ml-auto flex h-5 w-5 items-center justify-center rounded text-faint hover:text-danger"
+                      >
+                        <Trash2 size={13} strokeWidth={1.5} />
+                      </button>
+                    </div>
+
+                    {/* Слот аудио — «хозяин» длительности секции */}
+                    <div className="flex items-center gap-2">
+                      <Music size={14} strokeWidth={1.5} className="shrink-0 text-faint" />
+                      {section.audio ? (
+                        <>
+                          <span className="min-w-0 flex-1 truncate text-[12.5px]">
+                            {basename(section.audio.path)}
+                          </span>
+                          <span className="tnum shrink-0 text-[11.5px] text-accent">
+                            {section.audio.durationSec !== null
+                              ? formatDuration(section.audio.durationSec)
+                              : "…"}
+                          </span>
+                          <button
+                            type="button"
+                            aria-label="Убрать аудио"
+                            onClick={() => patchSection(section.id, { audio: null })}
+                            className="flex h-5 w-5 shrink-0 items-center justify-center rounded text-faint hover:text-danger"
+                          >
+                            <X size={13} strokeWidth={1.5} />
+                          </button>
+                        </>
+                      ) : (
+                        <>
+                          <Button variant="ghost" onClick={() => addSectionAudio(section.id)}>
+                            <Plus size={13} strokeWidth={1.5} /> Аудио
+                          </Button>
+                          <span className="text-[11.5px] text-warning">
+                            аудио задаёт длительность секции
+                          </span>
+                        </>
+                      )}
+                    </div>
+
+                    {/* Слот визуала */}
+                    <div className="flex items-center gap-2">
+                      <Images size={14} strokeWidth={1.5} className="shrink-0 text-faint" />
+                      {section.visuals.length > 0 ? (
+                        <>
+                          <span className="min-w-0 flex-1 truncate text-[12.5px]">
+                            {section.visuals.length}{" "}
+                            {section.kind === "images" ? "картинок" : "клипов"}
+                            <span className="text-faint">
+                              {" "}
+                              · {basename(section.visuals[0]!.path)}
+                              {section.visuals.length > 1 ? " …" : ""}
+                            </span>
+                          </span>
+                          <Button variant="ghost" onClick={() => addSectionVisuals(section, false)}>
+                            <Plus size={13} strokeWidth={1.5} />
+                          </Button>
+                          <button
+                            type="button"
+                            aria-label="Очистить визуал"
+                            onClick={() => patchSection(section.id, { visuals: [], kind: null })}
+                            className="flex h-5 w-5 shrink-0 items-center justify-center rounded text-faint hover:text-danger"
+                          >
+                            <X size={13} strokeWidth={1.5} />
+                          </button>
+                        </>
+                      ) : (
+                        <>
+                          <Button variant="ghost" onClick={() => addSectionVisuals(section, false)}>
+                            <Plus size={13} strokeWidth={1.5} /> Клипы или картинки
+                          </Button>
+                          <Button variant="ghost" onClick={() => addSectionVisuals(section, true)}>
+                            <FolderOpen size={13} strokeWidth={1.5} /> Папка
+                          </Button>
+                        </>
+                      )}
+                    </div>
+
+                    {timing && (
+                      <div className="text-[11.5px]">
+                        <span className="text-muted">{timing.text}</span>
+                        {timing.warn && (
+                          <span className="ml-2 rounded-pill bg-warning/15 px-2 py-0.5 text-[10.5px] font-medium text-warning">
+                            {timing.warn}
+                          </span>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+
+              <Button
+                variant="ghost"
+                className="self-start"
+                onClick={() =>
+                  setSections((prev) => [
+                    ...prev,
+                    { id: nextSectionId++, audio: null, kind: null, visuals: [] },
+                  ])
+                }
+              >
+                <Plus size={13} strokeWidth={1.5} /> Добавить секцию
+              </Button>
+            </div>
+          )}
         </div>
       ) : (
         <div className="flex flex-col gap-5">

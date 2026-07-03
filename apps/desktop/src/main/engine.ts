@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import fsp from "node:fs/promises";
 import path from "node:path";
 import { BrowserWindow, dialog, ipcMain, shell } from "electron";
 import {
@@ -19,6 +20,7 @@ import {
   probe,
   QueueStore,
   renderJob,
+  naturalCompare,
   saveConfig,
   savePreset,
   specInputs,
@@ -33,6 +35,39 @@ import {
 export type { OutputOverrides };
 
 const WHISPER_MODELS = ["tiny", "base", "small", "medium", "large-v3", "large-v3-turbo"];
+
+const AUDIO_EXT = new Set([".mp3", ".wav", ".m4a", ".aac", ".flac", ".ogg", ".opus", ".wma"]);
+const VIDEO_EXT = new Set([".mp4", ".mov", ".mkv", ".avi", ".webm", ".m4v", ".mts", ".ts"]);
+const IMAGE_EXT = new Set([".jpg", ".jpeg", ".png", ".webp", ".bmp", ".tiff"]);
+
+export interface ClassifiedMedia {
+  audios: string[];
+  clips: string[];
+  images: string[];
+}
+
+/** Разложить брошенные пути (включая папки) на аудио/клипы/картинки, natural-sort. */
+async function classifyMedia(paths: string[]): Promise<ClassifiedMedia> {
+  const result: ClassifiedMedia = { audios: [], clips: [], images: [] };
+  const push = (filePath: string): void => {
+    const ext = path.extname(filePath).toLowerCase();
+    if (AUDIO_EXT.has(ext)) result.audios.push(filePath);
+    else if (VIDEO_EXT.has(ext)) result.clips.push(filePath);
+    else if (IMAGE_EXT.has(ext)) result.images.push(filePath);
+  };
+  for (const p of paths) {
+    const stat = await fsp.stat(p).catch(() => null);
+    if (stat?.isDirectory()) {
+      for (const name of await fsp.readdir(p)) push(path.join(p, name));
+    } else if (stat?.isFile()) {
+      push(p);
+    }
+  }
+  result.audios.sort(naturalCompare);
+  result.clips.sort(naturalCompare);
+  result.images.sort(naturalCompare);
+  return result;
+}
 
 let store: QueueStore | null = null;
 const getStore = (): QueueStore => (store ??= new QueueStore());
@@ -210,6 +245,9 @@ export function registerEngineIpc(): void {
     return { whisperPath, modelFile };
   });
 
+  // ── Медиа ──
+  ipcMain.handle("media:classify", (_event, paths: string[]) => classifyMedia(paths));
+
   // ── Диалоги и shell ──
   ipcMain.handle("dialog:pick-videos", async (event) => {
     const win = BrowserWindow.fromWebContents(event.sender);
@@ -217,6 +255,29 @@ export function registerEngineIpc(): void {
     const result = await dialog.showOpenDialog(win, {
       properties: ["openFile", "multiSelections"],
       filters: [{ name: "Видео", extensions: ["mp4", "mov", "mkv", "avi", "webm", "m4v"] }],
+    });
+    return result.canceled ? [] : result.filePaths;
+  });
+  ipcMain.handle("dialog:pick-audio", async (event) => {
+    const win = BrowserWindow.fromWebContents(event.sender);
+    if (!win) return null;
+    const result = await dialog.showOpenDialog(win, {
+      properties: ["openFile"],
+      filters: [{ name: "Аудио", extensions: ["mp3", "wav", "m4a", "aac", "flac", "ogg"] }],
+    });
+    return result.canceled ? null : (result.filePaths[0] ?? null);
+  });
+  ipcMain.handle("dialog:pick-visuals", async (event) => {
+    const win = BrowserWindow.fromWebContents(event.sender);
+    if (!win) return [];
+    const result = await dialog.showOpenDialog(win, {
+      properties: ["openFile", "multiSelections"],
+      filters: [
+        {
+          name: "Клипы и картинки",
+          extensions: ["mp4", "mov", "mkv", "avi", "webm", "m4v", "jpg", "jpeg", "png", "webp", "bmp"],
+        },
+      ],
     });
     return result.canceled ? [] : result.filePaths;
   });

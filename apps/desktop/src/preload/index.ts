@@ -104,8 +104,15 @@ const api = {
       ipcRenderer.invoke("setup:whisper", model),
   },
   probeFile: (path: string): Promise<MediaInfo> => ipcRenderer.invoke("probe:file", path),
+  media: {
+    /** Разложить пути (включая папки) на аудио/клипы/картинки, natural-sort. */
+    classify: (paths: string[]): Promise<{ audios: string[]; clips: string[]; images: string[] }> =>
+      ipcRenderer.invoke("media:classify", paths),
+  },
   dialog: {
     pickVideos: (): Promise<string[]> => ipcRenderer.invoke("dialog:pick-videos"),
+    pickAudio: (): Promise<string | null> => ipcRenderer.invoke("dialog:pick-audio"),
+    pickVisuals: (): Promise<string[]> => ipcRenderer.invoke("dialog:pick-visuals"),
     pickFolder: (): Promise<string | null> => ipcRenderer.invoke("dialog:pick-folder"),
   },
   shell: {
