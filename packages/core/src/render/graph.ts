@@ -40,24 +40,27 @@ export interface BuiltGraph {
   totalDurationSec: number;
 }
 
-/** Escape a path for use inside a filter argument (ass=, lut3d=). */
+/**
+ * Escape a path for use as a filter option value (ass=, lut3d=). Filter args
+ * are parsed twice, so a Windows drive colon needs BOTH the backslash escape
+ * and surrounding single quotes (the pattern FFmpeg documents for subtitles).
+ */
 export function escapeFilterPath(filePath: string): string {
-  return filePath
+  const escaped = filePath
     .replace(/\\/g, "/")
     .replace(/:/g, "\\:")
-    .replace(/,/g, "\\,")
-    .replace(/'/g, "\\'")
-    .replace(/\[/g, "\\[")
-    .replace(/]/g, "\\]");
+    .replace(/'/g, "\\'");
+  return `'${escaped}'`;
 }
 
-interface TargetSpec {
+export interface TargetSpec {
   width: number;
   height: number;
   fps: number;
 }
 
-function targetSpec(inputs: MediaInfo[], preset: Preset): TargetSpec {
+/** Output resolution/fps a job will render at (used for ASS layout too). */
+export function computeTargetSpec(inputs: MediaInfo[], preset: Preset): TargetSpec {
   const first = inputs[0]?.video;
   const raw =
     preset.output.resolution === "source"
@@ -133,7 +136,7 @@ export function buildGraph(options: BuildGraphOptions): BuiltGraph {
     }
   }
 
-  const target = targetSpec(inputs, preset);
+  const target = computeTargetSpec(inputs, preset);
   const chains: string[] = [];
   const inputArgs: string[] = [];
 
