@@ -6,6 +6,9 @@ on:
     tags: ["v*"]
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   build:
     strategy:
@@ -47,3 +50,10 @@ jobs:
         with:
           name: vicut-${{ matrix.os }}
           path: ${{ matrix.artifact }}
+
+      # На тег — установщики прикладываются к GitHub-релизу.
+      - if: startsWith(github.ref, 'refs/tags/')
+        shell: bash
+        run: gh release upload "$GITHUB_REF_NAME" ${{ matrix.artifact }} --clobber
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
