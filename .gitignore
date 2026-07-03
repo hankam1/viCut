@@ -25,3 +25,6 @@ Thumbs.db
 # ViCut local data (downloaded binaries, models, test footage)
 .vicut/
 test-media/
+
+# Local design materials (not for the public repo)
+docs/design_handoff_vicut/
