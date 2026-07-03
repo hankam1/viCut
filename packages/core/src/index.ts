@@ -13,3 +13,5 @@ export {
   type ProgressCallback,
 } from "./ffmpeg/download.js";
 export { ensureTools, type Tools } from "./ffmpeg/ensure.js";
+export { probe } from "./probe/probe.js";
+export type { MediaInfo, VideoStreamInfo, AudioStreamInfo } from "./probe/types.js";
