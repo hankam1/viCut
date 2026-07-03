@@ -88,7 +88,7 @@ export function registerRender(program: Command): void {
       const started = Date.now();
       try {
         const result = await renderJob(
-          { inputs, output: options.output, preset },
+          { spec: { kind: "stitch", inputs }, output: options.output, preset },
           { tools, onProgress: progress.onEvent },
         );
         progress.finish();

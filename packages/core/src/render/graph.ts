@@ -1,3 +1,5 @@
+import fsp from "node:fs/promises";
+import path from "node:path";
 import type { MediaInfo } from "../probe/types.js";
 import type { Preset } from "../preset/schema.js";
 
@@ -20,16 +22,6 @@ export type LoudnormMode =
   | { mode: "measure" }
   | { mode: "apply"; measured: LoudnormMeasured }
   | null;
-
-export interface BuildGraphOptions {
-  inputs: MediaInfo[];
-  preset: Preset;
-  /** Skip all video chains — used for the audio prepass (loudness/transcription). */
-  audioOnly?: boolean;
-  /** Path to an .ass file to burn in as the last video filter. */
-  assPath?: string | null;
-  loudnorm?: LoudnormMode;
-}
 
 export interface BuiltGraph {
   /** Ordered ffmpeg input args (real files plus generated silence). */
@@ -61,7 +53,7 @@ export interface TargetSpec {
 
 /** Output resolution/fps a job will render at (used for ASS layout too). */
 export function computeTargetSpec(inputs: MediaInfo[], preset: Preset): TargetSpec {
-  const first = inputs[0]?.video;
+  const first = inputs.find((info) => info.video)?.video;
   const raw =
     preset.output.resolution === "source"
       ? { width: first?.width ?? 1920, height: first?.height ?? 1080 }
@@ -99,8 +91,62 @@ function loudnormFilter(preset: Preset, loudnorm: LoudnormMode): string[] {
   ];
 }
 
+/** Per-input video normalization: fit target frame, unify fps/timebase/format. */
+function videoNormalizeChain(target: TargetSpec): string {
+  return (
+    `scale=${target.width}:${target.height}:force_original_aspect_ratio=decrease,` +
+    `pad=${target.width}:${target.height}:(ow-iw)/2:(oh-ih)/2:color=black,` +
+    `fps=${target.fps},settb=AVTB,setsar=1,format=yuv420p`
+  );
+}
+
+const AUDIO_NORMALIZE = "aresample=48000:async=1,aformat=sample_fmts=fltp:channel_layouts=stereo";
+
+interface PostChainOptions {
+  audioOnly: boolean;
+  assPath?: string | null;
+  loudnorm?: LoudnormMode;
+}
+
+/** Final effects/subtitles/pixel-format video chain and loudnorm audio chain. */
+function appendPostChains(
+  chains: string[],
+  mergedVideo: string,
+  mergedAudio: string,
+  preset: Preset,
+  options: PostChainOptions,
+): { videoLabel: string | null; audioLabel: string } {
+  let videoLabel: string | null = null;
+  if (!options.audioOnly) {
+    const post = effectFilters(preset);
+    if (options.assPath) post.push(`ass=${escapeFilterPath(options.assPath)}`);
+    // Effects (e.g. lut3d via RGB) and filter negotiation can drift the pixel
+    // format; pin the encoder input to the universally playable yuv420p.
+    post.push("format=yuv420p");
+    chains.push(`[${mergedVideo}]${post.join(",")}[vout]`);
+    videoLabel = "[vout]";
+  }
+
+  const audioPost = loudnormFilter(preset, options.loudnorm ?? null);
+  chains.push(`[${mergedAudio}]${audioPost.length ? audioPost.join(",") : "anull"}[aout]`);
+
+  return { videoLabel, audioLabel: "[aout]" };
+}
+
+/* ═══════════════ Тип A — склейка клипов ═══════════════ */
+
+export interface BuildGraphOptions {
+  inputs: MediaInfo[];
+  preset: Preset;
+  /** Skip all video chains — used for the audio prepass (loudness/transcription). */
+  audioOnly?: boolean;
+  /** Path to an .ass file to burn in as the last video filter. */
+  assPath?: string | null;
+  loudnorm?: LoudnormMode;
+}
+
 /**
- * Build the -filter_complex graph for a job: per-input normalization
+ * Build the -filter_complex graph for a stitch job: per-input normalization
  * (scale+pad, fps, stereo 48k audio, silence for mute clips), concat or
  * xfade/acrossfade stitching, effects, subtitle burn-in and loudnorm.
  */
@@ -158,17 +204,10 @@ export function buildGraph(options: BuildGraphOptions): BuiltGraph {
 
   for (const [i] of inputs.entries()) {
     if (!audioOnly) {
-      chains.push(
-        `[${i}:v]scale=${target.width}:${target.height}:force_original_aspect_ratio=decrease,` +
-          `pad=${target.width}:${target.height}:(ow-iw)/2:(oh-ih)/2:color=black,` +
-          `fps=${target.fps},settb=AVTB,setsar=1,format=yuv420p[v${i}]`,
-      );
+      chains.push(`[${i}:v]${videoNormalizeChain(target)}[v${i}]`);
     }
     const audioSrc = silenceIndexByInput.get(i) ?? i;
-    chains.push(
-      `[${audioSrc}:a]aresample=48000:async=1,` +
-        `aformat=sample_fmts=fltp:channel_layouts=stereo[a${i}]`,
-    );
+    chains.push(`[${audioSrc}:a]${AUDIO_NORMALIZE}[a${i}]`);
   }
 
   let mergedVideo = "v0";
@@ -206,25 +245,191 @@ export function buildGraph(options: BuildGraphOptions): BuiltGraph {
     totalDurationSec = accumulated;
   }
 
-  let videoLabel: string | null = null;
-  if (!audioOnly) {
-    const post = effectFilters(preset);
-    if (options.assPath) post.push(`ass=${escapeFilterPath(options.assPath)}`);
-    // Effects (e.g. lut3d via RGB) and filter negotiation can drift the pixel
-    // format; pin the encoder input to the universally playable yuv420p.
-    post.push("format=yuv420p");
-    chains.push(`[${mergedVideo}]${post.join(",")}[vout]`);
-    videoLabel = "[vout]";
-  }
-
-  const audioPost = loudnormFilter(preset, options.loudnorm ?? null);
-  chains.push(`[${mergedAudio}]${audioPost.length ? audioPost.join(",") : "anull"}[aout]`);
+  const { videoLabel, audioLabel } = appendPostChains(chains, mergedVideo, mergedAudio, preset, {
+    audioOnly,
+    assPath: options.assPath,
+    loudnorm: options.loudnorm,
+  });
 
   return {
     inputArgs,
     filterComplex: chains.join(";"),
     videoLabel,
-    audioLabel: "[aout]",
+    audioLabel,
     totalDurationSec,
+  };
+}
+
+/* ═══════════════ Тип B — сборка под аудио ═══════════════ */
+
+export interface ProbedSection {
+  audio: MediaInfo;
+  visuals: {
+    kind: "clips" | "images";
+    infos: MediaInfo[];
+  };
+}
+
+export interface BuildAudioDrivenGraphOptions {
+  sections: ProbedSection[];
+  preset: Preset;
+  /** Directory for generated slideshow list files (concat demuxer). */
+  tmpDir: string;
+  audioOnly?: boolean;
+  assPath?: string | null;
+  loudnorm?: LoudnormMode;
+}
+
+export interface SectionTiming {
+  audioDurationSec: number;
+  /** Speed factor applied to clips (1 = untouched); null for image sections. */
+  speed: number | null;
+  /** Seconds per image; null for clip sections. */
+  secondsPerImage: number | null;
+}
+
+/** Path line for the concat demuxer list file (single quotes, ' → '\''). */
+function concatListPath(filePath: string): string {
+  return `'${filePath.replace(/\\/g, "/").replace(/'/g, "'\\''")}'`;
+}
+
+/**
+ * Build the graph for an audio-driven job: each section's audio track defines
+ * its duration; clips are speed-fitted to end exactly with the audio, images
+ * are spread evenly across it. Sections are then concatenated.
+ */
+export async function buildAudioDrivenGraph(
+  options: BuildAudioDrivenGraphOptions,
+): Promise<{ graph: BuiltGraph; timings: SectionTiming[] }> {
+  const { sections, preset, tmpDir } = options;
+  const audioOnly = options.audioOnly ?? false;
+  if (sections.length === 0) throw new RenderError("no sections");
+
+  for (const [i, section] of sections.entries()) {
+    if (!section.audio.audio) {
+      throw new RenderError(`section ${i + 1}: ${section.audio.path} has no audio stream`);
+    }
+    if (section.audio.durationSec === null) {
+      throw new RenderError(`section ${i + 1}: cannot determine duration of ${section.audio.path}`);
+    }
+    if (section.visuals.infos.length === 0) {
+      throw new RenderError(`section ${i + 1} has no visual files`);
+    }
+    for (const info of section.visuals.infos) {
+      if (!info.video) throw new RenderError(`${info.path} has no video/image stream`);
+      if (section.visuals.kind === "clips" && info.durationSec === null) {
+        throw new RenderError(`cannot determine duration of ${info.path}`);
+      }
+    }
+  }
+
+  const firstVisual = sections[0]!.visuals.infos[0]!;
+  const target = computeTargetSpec([firstVisual], preset);
+
+  const chains: string[] = [];
+  const inputArgs: string[] = [];
+  let inputIndex = 0;
+  const timings: SectionTiming[] = [];
+
+  for (const [si, section] of sections.entries()) {
+    const audioDur = section.audio.durationSec!;
+
+    if (!audioOnly) {
+      if (section.visuals.kind === "clips") {
+        const clipLabels: string[] = [];
+        let clipsTotal = 0;
+        for (const [ci, info] of section.visuals.infos.entries()) {
+          inputArgs.push("-i", info.path);
+          chains.push(`[${inputIndex}:v]${videoNormalizeChain(target)}[s${si}c${ci}]`);
+          clipLabels.push(`[s${si}c${ci}]`);
+          clipsTotal += info.durationSec!;
+          inputIndex++;
+        }
+        const speed = clipsTotal / audioDur;
+        timings.push({ audioDurationSec: audioDur, speed, secondsPerImage: null });
+
+        let merged: string;
+        if (clipLabels.length > 1) {
+          merged = `s${si}cat`;
+          chains.push(`${clipLabels.join("")}concat=n=${clipLabels.length}:v=1:a=0[${merged}]`);
+        } else {
+          merged = `s${si}c0`;
+        }
+        chains.push(
+          `[${merged}]setpts=PTS/${speed.toFixed(6)},fps=${target.fps},` +
+            `trim=duration=${audioDur.toFixed(3)},setpts=PTS-STARTPTS[v${si}]`,
+        );
+      } else {
+        // Слайдшоу: один вход через concat-демуксер со временем на кадр.
+        const perImage = audioDur / section.visuals.infos.length;
+        timings.push({ audioDurationSec: audioDur, speed: null, secondsPerImage: perImage });
+
+        const lines = ["ffconcat version 1.0"];
+        for (const info of section.visuals.infos) {
+          lines.push(`file ${concatListPath(info.path)}`);
+          lines.push(`duration ${perImage.toFixed(4)}`);
+        }
+        // Последний кадр дублируется, чтобы демуксер закрыл его длительность.
+        lines.push(`file ${concatListPath(section.visuals.infos.at(-1)!.path)}`);
+        const listPath = path.join(tmpDir, `section-${si}-images.txt`);
+        await fsp.writeFile(listPath, `${lines.join("\n")}\n`, "utf8");
+
+        inputArgs.push("-f", "concat", "-safe", "0", "-i", listPath);
+        chains.push(
+          `[${inputIndex}:v]${videoNormalizeChain(target)},` +
+            `trim=duration=${audioDur.toFixed(3)},setpts=PTS-STARTPTS[v${si}]`,
+        );
+        inputIndex++;
+      }
+    } else {
+      timings.push({
+        audioDurationSec: audioDur,
+        speed:
+          section.visuals.kind === "clips"
+            ? section.visuals.infos.reduce((sum, i) => sum + (i.durationSec ?? 0), 0) / audioDur
+            : null,
+        secondsPerImage:
+          section.visuals.kind === "images" ? audioDur / section.visuals.infos.length : null,
+      });
+    }
+
+    inputArgs.push("-i", section.audio.path);
+    chains.push(
+      `[${inputIndex}:a]${AUDIO_NORMALIZE},atrim=duration=${audioDur.toFixed(3)}[a${si}]`,
+    );
+    inputIndex++;
+  }
+
+  let mergedVideo = "v0";
+  let mergedAudio = "a0";
+  if (sections.length > 1) {
+    if (!audioOnly) {
+      const pairs = sections.map((_, i) => `[v${i}][a${i}]`).join("");
+      chains.push(`${pairs}concat=n=${sections.length}:v=1:a=1[vcat][acat]`);
+      mergedVideo = "vcat";
+    } else {
+      const labels = sections.map((_, i) => `[a${i}]`).join("");
+      chains.push(`${labels}concat=n=${sections.length}:v=0:a=1[acat]`);
+    }
+    mergedAudio = "acat";
+  }
+
+  const { videoLabel, audioLabel } = appendPostChains(chains, mergedVideo, mergedAudio, preset, {
+    audioOnly,
+    assPath: options.assPath,
+    loudnorm: options.loudnorm,
+  });
+
+  const totalDurationSec = sections.reduce((sum, s) => sum + s.audio.durationSec!, 0);
+
+  return {
+    graph: {
+      inputArgs,
+      filterComplex: chains.join(";"),
+      videoLabel,
+      audioLabel,
+      totalDurationSec,
+    },
+    timings,
   };
 }

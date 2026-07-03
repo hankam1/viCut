@@ -1,5 +1,13 @@
 import { contextBridge, ipcRenderer, webUtils } from "electron";
-import type { Config, MediaInfo, Preset, QueueJob, RenderStage, ToolLocation } from "@vicut/core";
+import type {
+  Config,
+  JobSpec,
+  MediaInfo,
+  Preset,
+  QueueJob,
+  RenderStage,
+  ToolLocation,
+} from "@vicut/core";
 
 export interface OutputOverrides {
   resolution?: "source" | "480p" | "720p" | "1080p" | "1440p" | "2160p";
@@ -8,7 +16,9 @@ export interface OutputOverrides {
 }
 
 export interface AddJobPayload {
-  inputs: string[];
+  /** Тип A — плоский список клипов; тип B — spec целиком. */
+  inputs?: string[];
+  spec?: JobSpec;
   output?: string;
   presetName: string;
   title?: string;

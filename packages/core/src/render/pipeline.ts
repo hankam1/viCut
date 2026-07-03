@@ -13,11 +13,16 @@ import { transcribeAudio } from "../transcribe/transcribe.js";
 import type { Transcript } from "../transcribe/types.js";
 import { selectEncoder } from "./encoders.js";
 import {
+  buildAudioDrivenGraph,
   buildGraph,
   computeTargetSpec,
   RenderError,
+  type BuiltGraph,
   type LoudnormMeasured,
+  type LoudnormMode,
+  type ProbedSection,
 } from "./graph.js";
+import type { JobSpec } from "./spec.js";
 
 export type RenderStage = "probe" | "prepare-audio" | "transcribe" | "subtitles" | "encode";
 
@@ -29,7 +34,7 @@ export interface RenderProgressEvent {
 }
 
 export interface RenderRequest {
-  inputs: string[];
+  spec: JobSpec;
   output: string;
   preset: Preset;
 }
@@ -75,94 +80,76 @@ function parseLoudnorm(stderr: string): LoudnormMeasured {
   };
 }
 
-export interface AudioPrepassResult {
-  measured: LoudnormMeasured | null;
-  totalDurationSec: number;
-}
-
-/**
- * Single decode pass over the stitched audio timeline. Measures loudness
- * (two-pass loudnorm, first pass) and can simultaneously write a 16 kHz mono
- * WAV for transcription — the timeline matches the final render exactly.
- */
-export async function audioPrepass(
-  infos: MediaInfo[],
-  preset: Preset,
-  tools: Tools,
-  options: {
-    measureLoudness: boolean;
-    wavPath?: string | null;
-    onProgress?: (percent: number | null) => void;
-  },
-): Promise<AudioPrepassResult> {
-  const graph = buildGraph({
-    inputs: infos,
-    preset,
-    audioOnly: true,
-    loudnorm: options.measureLoudness ? { mode: "measure" } : null,
-  });
-
-  const args = ["-y", ...graph.inputArgs, "-filter_complex", graph.filterComplex, "-map", graph.audioLabel];
-  if (options.wavPath) {
-    args.push("-ar", "16000", "-ac", "1", "-c:a", "pcm_s16le", options.wavPath);
-  } else {
-    args.push("-f", "null", "-");
-  }
-
-  const { stderr } = await runFfmpeg(tools.ffmpeg.path, args, {
-    totalDurationSec: graph.totalDurationSec,
-    onProgress: (p) => options.onProgress?.(p.percent),
-  });
-
-  return {
-    measured: options.measureLoudness ? parseLoudnorm(stderr) : null,
-    totalDurationSec: graph.totalDurationSec,
-  };
-}
-
 /**
  * Render a job end to end: probe inputs, one audio prepass (loudness
  * measurement + transcription WAV), transcribe and build subtitles when the
- * preset asks for them, then encode.
+ * preset asks for them, then encode. Works for both stitch and audio-driven
+ * jobs — only the graph construction differs.
  */
 export async function renderJob(
   request: RenderRequest,
   options: RenderOptions,
 ): Promise<RenderResult> {
-  const { preset } = request;
+  const { preset, spec } = request;
   const emit = (stage: RenderStage, percent: number | null, detail?: string): void =>
     options.onProgress?.({ stage, percent, detail });
-
-  if (request.inputs.length === 0) throw new RenderError("no input files");
-
-  emit("probe", null);
-  const infos: MediaInfo[] = [];
-  for (const input of request.inputs) {
-    infos.push(await probe(input, options.tools.ffprobe.path));
-  }
-
-  const subsEnabled = preset.subtitles.enabled;
-  const needPrepass = preset.audio.normalize || subsEnabled;
 
   const tmpDir = path.join(dataDir(), "tmp", `render-${crypto.randomUUID()}`);
   await fsp.mkdir(tmpDir, { recursive: true });
 
   try {
-    let measured: LoudnormMeasured | null = null;
-    let prepassDurationSec = 0;
-    const wavPath = subsEnabled ? path.join(tmpDir, "timeline.wav") : null;
+    // ── Анализ исходников ──
+    emit("probe", null);
+    const doProbe = (file: string): Promise<MediaInfo> => probe(file, options.tools.ffprobe.path);
 
-    if (needPrepass) {
-      emit("prepare-audio", 0);
-      const prepass = await audioPrepass(infos, preset, options.tools, {
-        measureLoudness: preset.audio.normalize,
-        wavPath,
-        onProgress: (percent) => emit("prepare-audio", percent),
-      });
-      measured = prepass.measured;
-      prepassDurationSec = prepass.totalDurationSec;
+    let stitchInfos: MediaInfo[] = [];
+    let sectionInfos: ProbedSection[] = [];
+    if (spec.kind === "stitch") {
+      if (spec.inputs.length === 0) throw new RenderError("no input files");
+      for (const input of spec.inputs) stitchInfos.push(await doProbe(input));
+    } else {
+      for (const section of spec.sections) {
+        const audio = await doProbe(section.audio);
+        const infos: MediaInfo[] = [];
+        for (const file of section.visuals.files) infos.push(await doProbe(file));
+        sectionInfos.push({ audio, visuals: { kind: section.visuals.kind, infos } });
+      }
     }
 
+    const makeGraph = async (opts: {
+      audioOnly?: boolean;
+      assPath?: string | null;
+      loudnorm?: LoudnormMode;
+    }): Promise<BuiltGraph> =>
+      spec.kind === "stitch"
+        ? buildGraph({ inputs: stitchInfos, preset, ...opts })
+        : (await buildAudioDrivenGraph({ sections: sectionInfos, preset, tmpDir, ...opts })).graph;
+
+    // ── Аудио-препасс: замер громкости + WAV для транскрипции за один проход ──
+    const subsEnabled = preset.subtitles.enabled;
+    const needPrepass = preset.audio.normalize || subsEnabled;
+    const wavPath = subsEnabled ? path.join(tmpDir, "timeline.wav") : null;
+
+    let measured: LoudnormMeasured | null = null;
+    let prepassDurationSec = 0;
+    if (needPrepass) {
+      emit("prepare-audio", 0);
+      const graph = await makeGraph({
+        audioOnly: true,
+        loudnorm: preset.audio.normalize ? { mode: "measure" } : null,
+      });
+      const args = ["-y", ...graph.inputArgs, "-filter_complex", graph.filterComplex, "-map", graph.audioLabel];
+      if (wavPath) args.push("-ar", "16000", "-ac", "1", "-c:a", "pcm_s16le", wavPath);
+      else args.push("-f", "null", "-");
+      const { stderr } = await runFfmpeg(options.tools.ffmpeg.path, args, {
+        totalDurationSec: graph.totalDurationSec,
+        onProgress: (p) => emit("prepare-audio", p.percent),
+      });
+      if (preset.audio.normalize) measured = parseLoudnorm(stderr);
+      prepassDurationSec = graph.totalDurationSec;
+    }
+
+    // ── Субтитры ──
     let assPath: string | null = null;
     let srtPath: string | null = null;
     let transcript: Transcript | null = null;
@@ -188,7 +175,11 @@ export async function renderJob(
           await fsp.writeFile(srtPath, segmentsToSrt(transcript.segments), "utf8");
         }
         if (preset.subtitles.burnIn) {
-          const target = computeTargetSpec(infos, preset);
+          const reference =
+            spec.kind === "stitch"
+              ? stitchInfos
+              : [sectionInfos[0]!.visuals.infos[0]!];
+          const target = computeTargetSpec(reference, preset);
           assPath = path.join(tmpDir, "subtitles.ass");
           await fsp.writeFile(
             assPath,
@@ -202,6 +193,7 @@ export async function renderJob(
       }
     }
 
+    // ── Кодирование ──
     const encoder = await selectEncoder(
       options.tools.ffmpeg.path,
       preset.output.videoCodec,
@@ -210,9 +202,7 @@ export async function renderJob(
     );
 
     emit("encode", 0, encoder.name);
-    const graph = buildGraph({
-      inputs: infos,
-      preset,
+    const graph = await makeGraph({
       assPath,
       loudnorm: measured ? { mode: "apply", measured } : null,
     });

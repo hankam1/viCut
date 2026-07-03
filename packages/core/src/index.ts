@@ -57,17 +57,26 @@ export {
 } from "./render/encoders.js";
 export {
   buildGraph,
+  buildAudioDrivenGraph,
   computeTargetSpec,
   escapeFilterPath,
   RenderError,
   type BuiltGraph,
   type BuildGraphOptions,
+  type BuildAudioDrivenGraphOptions,
+  type ProbedSection,
+  type SectionTiming,
   type LoudnormMeasured,
   type TargetSpec,
 } from "./render/graph.js";
 export {
+  specInputs,
+  naturalCompare,
+  type JobSpec,
+  type SectionSpec,
+} from "./render/spec.js";
+export {
   renderJob,
-  audioPrepass,
   type RenderRequest,
   type RenderResult,
   type RenderOptions,

@@ -66,7 +66,12 @@ export function registerQueue(program: Command): void {
         );
         const store = new QueueStore();
         try {
-          const job = store.add({ inputs, output: options.output, preset, title: options.title });
+          const job = store.add({
+            spec: { kind: "stitch", inputs },
+            output: options.output,
+            preset,
+            title: options.title,
+          });
           console.log(
             `${pc.green("✓")} job #${job.id} queued: ${pc.bold(job.title)} ` +
               pc.dim(`(${inputs.length} clip${inputs.length > 1 ? "s" : ""}, preset: ${preset.name})`),

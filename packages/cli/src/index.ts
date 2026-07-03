@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { Command } from "commander";
 import pc from "picocolors";
+import { registerAssemble } from "./commands/assemble.js";
 import { registerConfig } from "./commands/config.js";
 import { registerPreset } from "./commands/preset.js";
 import { registerProbe } from "./commands/probe.js";
@@ -21,6 +22,7 @@ registerProbe(program);
 registerPreset(program);
 registerConfig(program);
 registerRender(program);
+registerAssemble(program);
 registerTranscribe(program);
 registerQueue(program);
 

@@ -3,12 +3,15 @@ import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { dataDir } from "../platform/paths.js";
 import { presetSchema, type Preset } from "../preset/schema.js";
+import { specInputs, type JobSpec } from "../render/spec.js";
 
 export type JobStatus = "pending" | "running" | "done" | "failed" | "canceled";
 
 export interface QueueJob {
   id: number;
   title: string;
+  spec: JobSpec;
+  /** Все файлы задачи одним списком (для отображения). */
   inputs: string[];
   output: string;
   preset: Preset;
@@ -24,7 +27,7 @@ export interface QueueJob {
 
 export interface AddJobInput {
   title?: string;
-  inputs: string[];
+  spec: JobSpec;
   output: string;
   preset: Preset;
 }
@@ -45,10 +48,14 @@ interface JobRow {
 }
 
 function rowToJob(row: JobRow): QueueJob {
+  // Обратная совместимость: массив в колонке = склейка клипов (тип A).
+  const parsed = JSON.parse(row.inputs) as string[] | JobSpec;
+  const spec: JobSpec = Array.isArray(parsed) ? { kind: "stitch", inputs: parsed } : parsed;
   return {
     id: row.id,
     title: row.title,
-    inputs: JSON.parse(row.inputs) as string[],
+    spec,
+    inputs: specInputs(spec),
     output: row.output,
     preset: presetSchema.parse(JSON.parse(row.preset)),
     status: row.status as JobStatus,
@@ -94,9 +101,11 @@ export class QueueStore {
 
   add(input: AddJobInput): QueueJob {
     const title = input.title ?? path.parse(input.output).name;
+    const serialized =
+      input.spec.kind === "stitch" ? JSON.stringify(input.spec.inputs) : JSON.stringify(input.spec);
     const result = this.db
       .prepare(`INSERT INTO jobs (title, inputs, output, preset) VALUES (?, ?, ?, ?)`)
-      .run(title, JSON.stringify(input.inputs), input.output, JSON.stringify(input.preset));
+      .run(title, serialized, input.output, JSON.stringify(input.preset));
     return this.get(Number(result.lastInsertRowid))!;
   }
 

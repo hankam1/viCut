@@ -37,7 +37,7 @@ export async function runQueue(
     let lastPersist = 0;
     try {
       const result = await renderJob(
-        { inputs: job.inputs, output: job.output, preset: job.preset },
+        { spec: job.spec, output: job.output, preset: job.preset },
         {
           tools,
           onProgress: (event) => {

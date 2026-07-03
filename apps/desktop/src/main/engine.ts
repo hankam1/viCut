@@ -21,8 +21,10 @@ import {
   renderJob,
   saveConfig,
   savePreset,
+  specInputs,
   type Config,
   type DownloadProgress,
+  type JobSpec,
   type OutputOverrides,
   type Preset,
   type Tools,
@@ -76,7 +78,7 @@ async function runQueueLoop(): Promise<void> {
       let lastPersist = 0;
       try {
         const result = await renderJob(
-          { inputs: job.inputs, output: job.output, preset: job.preset },
+          { spec: job.spec, output: job.output, preset: job.preset },
           {
             tools,
             onProgress: (event) => {
@@ -112,7 +114,9 @@ export function registerEngineIpc(): void {
     async (
       _event,
       payload: {
-        inputs: string[];
+        /** Тип A — плоский список клипов; тип B — spec целиком. */
+        inputs?: string[];
+        spec?: JobSpec;
         output?: string;
         presetName: string;
         title?: string;
@@ -120,10 +124,11 @@ export function registerEngineIpc(): void {
         autoStart?: boolean;
       },
     ) => {
+      const spec: JobSpec = payload.spec ?? { kind: "stitch", inputs: payload.inputs ?? [] };
       const preset = applyOutputOverrides(await loadPreset(payload.presetName), payload.overrides);
       const job = getStore().add({
-        inputs: payload.inputs,
-        output: payload.output ?? defaultOutputPath(payload.inputs, payload.title),
+        spec,
+        output: payload.output ?? defaultOutputPath(specInputs(spec), payload.title),
         preset,
         title: payload.title,
       });
