@@ -1,0 +1,100 @@
+/* ViCut — дизайн-токены (источник: design handoff, tokens/vicut-tokens.css) */
+
+:root {
+  /* Цвет · поверхности */
+  --vc-bg: #0b0d10;
+  --vc-surface: #14171c;
+  --vc-surface-2: #1c2027;
+  --vc-border: #262b33;
+
+  /* Цвет · текст */
+  --vc-text: #e8eaed;
+  --vc-text-muted: #8b93a1;
+  --vc-text-faint: #5d6572;
+
+  /* Цвет · акцент */
+  --vc-accent: #7c5cff;
+  --vc-accent-hover: #9070ff;
+  --vc-accent-soft: rgba(124, 92, 255, 0.16);
+
+  /* Цвет · статусы */
+  --vc-success: #3ddc84;
+  --vc-warning: #ffb224;
+  --vc-danger: #ff5c5c;
+
+  /* Типографика */
+  --vc-font-ui: "Inter Variable", "Inter", system-ui, -apple-system, sans-serif;
+  --vc-font-wordmark: "Outfit Variable", "Outfit", "Inter", sans-serif;
+  --vc-font-mono: "JetBrains Mono Variable", "JetBrains Mono", ui-monospace, Menlo, monospace;
+  --vc-fs-base: 13px;
+  --vc-fs-sm: 12px;
+  --vc-fs-xs: 11.5px;
+  --vc-fs-title: 18px;
+  --vc-fs-h2: 16px;
+  --vc-fw-regular: 400;
+  --vc-fw-medium: 500;
+  --vc-fw-semibold: 600;
+  --vc-lh: 1.5;
+
+  /* Радиусы */
+  --vc-radius-sm: 6px;
+  --vc-radius-md: 8px;
+  --vc-radius-lg: 10px;
+  --vc-radius-xl: 12px;
+  --vc-radius-2xl: 14px;
+  --vc-radius-pill: 999px;
+
+  /* Тени */
+  --vc-shadow-modal: 0 24px 60px rgba(0, 0, 0, 0.5);
+  --vc-shadow-pop: 0 8px 24px rgba(0, 0, 0, 0.4);
+  --vc-focus-ring: 0 0 0 2px var(--vc-bg), 0 0 0 4px var(--vc-accent);
+
+  /* Движение */
+  --vc-dur-fast: 120ms;
+  --vc-dur-base: 160ms;
+  --vc-dur-slow: 200ms;
+  --vc-ease: cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+:root[data-theme="light"] {
+  --vc-bg: #fafbfc;
+  --vc-surface: #ffffff;
+  --vc-surface-2: #f1f3f6;
+  --vc-border: #e4e7ec;
+
+  --vc-text: #171a1f;
+  --vc-text-muted: #697180;
+  --vc-text-faint: #98a0ad;
+
+  --vc-accent: #6a4ce8;
+  --vc-accent-hover: #5b3fd6;
+  --vc-accent-soft: rgba(106, 76, 232, 0.1);
+
+  --vc-success: #1fa85c;
+  --vc-warning: #c77a00;
+  --vc-danger: #e23b3b;
+
+  --vc-shadow-modal: 0 24px 60px rgba(23, 26, 31, 0.18);
+  --vc-shadow-pop: 0 8px 24px rgba(23, 26, 31, 0.12);
+  --vc-focus-ring: 0 0 0 2px var(--vc-bg), 0 0 0 4px var(--vc-accent);
+}
+
+@media (prefers-color-scheme: light) {
+  :root[data-theme="system"] {
+    --vc-bg: #fafbfc;
+    --vc-surface: #ffffff;
+    --vc-surface-2: #f1f3f6;
+    --vc-border: #e4e7ec;
+    --vc-text: #171a1f;
+    --vc-text-muted: #697180;
+    --vc-text-faint: #98a0ad;
+    --vc-accent: #6a4ce8;
+    --vc-accent-hover: #5b3fd6;
+    --vc-accent-soft: rgba(106, 76, 232, 0.1);
+    --vc-success: #1fa85c;
+    --vc-warning: #c77a00;
+    --vc-danger: #e23b3b;
+    --vc-shadow-modal: 0 24px 60px rgba(23, 26, 31, 0.18);
+    --vc-shadow-pop: 0 8px 24px rgba(23, 26, 31, 0.12);
+  }
+}

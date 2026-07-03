@@ -1,0 +1,104 @@
+@import "./tokens.css";
+@import "tailwindcss";
+
+@theme inline {
+  --color-*: initial;
+  --color-bg: var(--vc-bg);
+  --color-surface: var(--vc-surface);
+  --color-surface-2: var(--vc-surface-2);
+  --color-border: var(--vc-border);
+  --color-text: var(--vc-text);
+  --color-muted: var(--vc-text-muted);
+  --color-faint: var(--vc-text-faint);
+  --color-accent: var(--vc-accent);
+  --color-accent-hover: var(--vc-accent-hover);
+  --color-accent-soft: var(--vc-accent-soft);
+  --color-success: var(--vc-success);
+  --color-warning: var(--vc-warning);
+  --color-danger: var(--vc-danger);
+  --color-white: #ffffff;
+  --color-black: #000000;
+  --color-transparent: transparent;
+
+  --font-ui: var(--vc-font-ui);
+  --font-wordmark: var(--vc-font-wordmark);
+  --font-mono: var(--vc-font-mono);
+
+  --radius-*: initial;
+  --radius-sm: var(--vc-radius-sm);
+  --radius-md: var(--vc-radius-md);
+  --radius-lg: var(--vc-radius-lg);
+  --radius-xl: var(--vc-radius-xl);
+  --radius-2xl: var(--vc-radius-2xl);
+  --radius-pill: var(--vc-radius-pill);
+
+  --shadow-*: initial;
+  --shadow-pop: var(--vc-shadow-pop);
+  --shadow-modal: var(--vc-shadow-modal);
+
+  --ease-vc: var(--vc-ease);
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--vc-bg);
+  color: var(--vc-text);
+  font-family: var(--vc-font-ui);
+  font-size: var(--vc-fs-base);
+  line-height: var(--vc-lh);
+  -webkit-font-smoothing: antialiased;
+  overflow: hidden;
+  user-select: none;
+}
+
+/* Числа и таймкоды не должны «прыгать» */
+.tnum {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Зоны перетаскивания окна (кастомный тайтлбар) */
+.app-drag {
+  -webkit-app-region: drag;
+}
+.app-no-drag {
+  -webkit-app-region: no-drag;
+}
+
+/* Focus-кольца — accent с 2px отступом */
+:focus-visible {
+  outline: none;
+  box-shadow: var(--vc-focus-ring);
+  border-radius: var(--vc-radius-sm);
+}
+
+/* Скроллбары под тёмную тему */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--vc-border);
+  border-radius: 999px;
+  border: 2px solid var(--vc-bg);
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--vc-text-faint);
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
