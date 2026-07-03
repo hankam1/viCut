@@ -1,8 +1,9 @@
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Pause, Play } from "lucide-react";
 import { Button } from "../components/Button.js";
 import { JobCard } from "../components/JobCard.js";
 import { Mark } from "../components/Mark.js";
+import { NewJobWizard } from "../components/wizard/NewJobWizard.js";
 import { useQueue } from "../hooks/useQueue.js";
 
 const VIDEO_EXT = new Set(["mp4", "mov", "mkv", "avi", "webm", "m4v", "mts", "ts"]);
@@ -13,18 +14,27 @@ function videoPathsFromDrop(files: FileList): string[] {
     .filter((p) => VIDEO_EXT.has(p.split(".").pop()?.toLowerCase() ?? ""));
 }
 
-/* Пока мастер задачи не готов — задачи добавляются с пресетом по умолчанию. */
-const DEFAULT_PRESET = "youtube";
-
 export function QueueView() {
   const queue = useQueue();
   const [dragOver, setDragOver] = useState(false);
+  const [wizardFiles, setWizardFiles] = useState<string[] | null>(null);
+  const [wizardStep, setWizardStep] = useState<1 | 2>(1);
 
-  const addInputs = useCallback(
-    (inputs: string[]) => {
-      if (inputs.length > 0) void queue.addJobs(inputs, DEFAULT_PRESET);
-    },
-    [queue],
+  const addInputs = useCallback((inputs: string[]) => {
+    if (inputs.length > 0) {
+      setWizardStep(1);
+      setWizardFiles(inputs);
+    }
+  }, []);
+
+  useEffect(
+    () =>
+      window.vicut.on("debug:open-wizard", (payload) => {
+        const paths = payload as string[];
+        setWizardStep(paths[0] === "--step2" ? 2 : 1);
+        setWizardFiles(paths.filter((p) => p !== "--step2"));
+      }),
+    [],
   );
 
   const pickFiles = useCallback(() => {
@@ -117,6 +127,28 @@ export function QueueView() {
             />
           ))}
         </div>
+      )}
+
+      {wizardFiles && (
+        <NewJobWizard
+          initialFiles={wizardFiles}
+          initialStep={wizardStep}
+          onClose={() => setWizardFiles(null)}
+          onSubmit={(payload) => {
+            setWizardFiles(null);
+            void window.vicut.queue.add({
+              inputs: payload.inputs,
+              output: payload.output,
+              presetName: payload.presetName,
+              title: payload.title,
+              overrides: {
+                resolution: payload.overrides.resolution,
+                fps: payload.overrides.fps,
+                videoCodec: payload.overrides.codec,
+              },
+            });
+          }}
+        />
       )}
     </div>
   );

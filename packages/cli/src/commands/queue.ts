@@ -1,8 +1,10 @@
 import type { Command } from "commander";
 import pc from "picocolors";
 import {
+  applyOutputOverrides,
   ensureTools,
   loadPreset,
+  parseOutputOverrides,
   QueueStore,
   runQueue,
   type QueueJob,
@@ -43,9 +45,25 @@ export function registerQueue(program: Command): void {
     .requiredOption("-o, --output <file>", "output video file (.mp4)")
     .option("-p, --preset <nameOrPath>", "preset name or path to a preset .json", "default")
     .option("-t, --title <title>", "job title shown in the queue")
+    .option("--resolution <res>", "override: source | 480p | 720p | 1080p | 1440p | 2160p (4k)")
+    .option("--fps <fps>", "override: source | 30 | 60")
+    .option("--codec <codec>", "override: h264 | h265")
     .action(
-      async (inputs: string[], options: { output: string; preset: string; title?: string }) => {
-        const preset = await loadPreset(options.preset);
+      async (
+        inputs: string[],
+        options: {
+          output: string;
+          preset: string;
+          title?: string;
+          resolution?: string;
+          fps?: string;
+          codec?: string;
+        },
+      ) => {
+        const preset = applyOutputOverrides(
+          await loadPreset(options.preset),
+          parseOutputOverrides(options),
+        );
         const store = new QueueStore();
         try {
           const job = store.add({ inputs, output: options.output, preset, title: options.title });

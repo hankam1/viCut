@@ -26,6 +26,12 @@ export {
 } from "./preset/schema.js";
 export { builtinPreset, builtinPresetNames } from "./preset/builtin.js";
 export {
+  applyOutputOverrides,
+  parseOutputOverrides,
+  RESOLUTION_PRESETS,
+  type OutputOverrides,
+} from "./preset/overrides.js";
+export {
   loadPreset,
   savePreset,
   listUserPresets,

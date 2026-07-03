@@ -38,6 +38,14 @@ function createWindow(): void {
 
   win.once("ready-to-show", () => win.show());
 
+  // Отладочный запуск с открытым мастером: VICUT_OPEN_WIZARD="a.mp4;b.mp4"
+  const debugWizard = process.env["VICUT_OPEN_WIZARD"];
+  if (debugWizard) {
+    win.webContents.once("did-finish-load", () => {
+      win.webContents.send("debug:open-wizard", debugWizard.split(";").filter(Boolean));
+    });
+  }
+
   if (rendererUrl) win.loadURL(rendererUrl);
   else void win.loadFile(path.join(import.meta.dirname, "../renderer/index.html"));
 }

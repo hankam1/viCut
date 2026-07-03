@@ -41,6 +41,7 @@ const EVENT_CHANNELS = [
   "queue:job-progress",
   "queue:job-finished",
   "queue:running-changed",
+  "debug:open-wizard",
 ] as const;
 
 type EventChannel = (typeof EVENT_CHANNELS)[number];

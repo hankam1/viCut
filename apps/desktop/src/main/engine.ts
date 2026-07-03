@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { BrowserWindow, dialog, ipcMain, shell } from "electron";
 import {
+  applyOutputOverrides,
   builtinPreset,
   builtinPresetNames,
   ensureTools,
@@ -19,25 +20,12 @@ import {
   saveConfig,
   savePreset,
   type Config,
+  type OutputOverrides,
   type Preset,
   type Tools,
 } from "@vicut/core";
 
-/** Быстрые оверрайды вывода из мастера — применяются к копии пресета задачи. */
-export interface OutputOverrides {
-  resolution?: "source" | "480p" | "720p" | "1080p" | "1440p" | "2160p";
-  fps?: "source" | 30 | 60;
-  videoCodec?: "h264" | "hevc";
-}
-
-const RESOLUTIONS: Record<string, { width: number; height: number } | "source"> = {
-  source: "source",
-  "480p": { width: 854, height: 480 },
-  "720p": { width: 1280, height: 720 },
-  "1080p": { width: 1920, height: 1080 },
-  "1440p": { width: 2560, height: 1440 },
-  "2160p": { width: 3840, height: 2160 },
-};
+export type { OutputOverrides };
 
 const WHISPER_MODELS = ["tiny", "base", "small", "medium", "large-v3", "large-v3-turbo"];
 
@@ -50,15 +38,6 @@ let pauseRequested = false;
 
 function broadcast(channel: string, payload?: unknown): void {
   for (const win of BrowserWindow.getAllWindows()) win.webContents.send(channel, payload);
-}
-
-function applyOverrides(preset: Preset, overrides?: OutputOverrides): Preset {
-  if (!overrides) return preset;
-  const output = { ...preset.output };
-  if (overrides.resolution) output.resolution = RESOLUTIONS[overrides.resolution] ?? "source";
-  if (overrides.fps) output.fps = overrides.fps;
-  if (overrides.videoCodec) output.videoCodec = overrides.videoCodec;
-  return { ...preset, output };
 }
 
 function defaultOutputPath(inputs: string[], title?: string): string {
@@ -138,7 +117,7 @@ export function registerEngineIpc(): void {
         autoStart?: boolean;
       },
     ) => {
-      const preset = applyOverrides(await loadPreset(payload.presetName), payload.overrides);
+      const preset = applyOutputOverrides(await loadPreset(payload.presetName), payload.overrides);
       const job = getStore().add({
         inputs: payload.inputs,
         output: payload.output ?? defaultOutputPath(payload.inputs, payload.title),
