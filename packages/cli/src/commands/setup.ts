@@ -1,14 +1,16 @@
 import type { Command } from "commander";
 import pc from "picocolors";
-import { ensureTools, type DownloadProgress } from "@vicut/core";
+import { ensureModel, ensureTools, ensureWhisper, type DownloadProgress } from "@vicut/core";
 import { formatBytes } from "../format.js";
 
 export function registerSetup(program: Command): void {
   program
     .command("setup")
-    .description("Download FFmpeg and verify all tools are ready")
+    .description("Download FFmpeg (and optionally whisper.cpp) so ViCut is ready to run")
     .option("-f, --force", "re-download even if tools are already present")
-    .action(async (options: { force?: boolean }) => {
+    .option("-w, --whisper", "also set up local transcription (whisper.cpp + model)")
+    .option("-m, --model <model>", "whisper model to download with --whisper", "large-v3-turbo")
+    .action(async (options: { force?: boolean; whisper?: boolean; model: string }) => {
       let currentFile = "";
       let lastRender = 0;
 
@@ -32,10 +34,23 @@ export function registerSetup(program: Command): void {
 
       const tools = await ensureTools({ force: options.force, onProgress: renderProgress });
       if (currentFile) process.stdout.write("\n");
+      currentFile = "";
 
       console.log(`${pc.green("✓")} ffmpeg   ${pc.dim(tools.ffmpeg.path)}`);
       console.log(`           ${pc.dim(tools.ffmpeg.version)}`);
       console.log(`${pc.green("✓")} ffprobe  ${pc.dim(tools.ffprobe.path)}`);
       console.log(`           ${pc.dim(tools.ffprobe.version)}`);
+
+      if (options.whisper) {
+        const whisperPath = await ensureWhisper(renderProgress);
+        if (currentFile) process.stdout.write("\n");
+        currentFile = "";
+        console.log(`${pc.green("✓")} whisper  ${pc.dim(whisperPath)}`);
+
+        const modelFile = await ensureModel(options.model, renderProgress);
+        if (currentFile) process.stdout.write("\n");
+        currentFile = "";
+        console.log(`${pc.green("✓")} model    ${pc.dim(modelFile)}`);
+      }
     });
 }

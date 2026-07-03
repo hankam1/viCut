@@ -66,3 +66,22 @@ export {
   type RenderStage,
   type RenderProgressEvent,
 } from "./render/pipeline.js";
+export { downloadFile, extractArchive, findFileRecursive } from "./net/download.js";
+export type {
+  Transcript,
+  TranscriptSegment,
+  TranscriptionProviderName,
+  TranscribeProgress,
+} from "./transcribe/types.js";
+export { transcribeAudio, resolveProvider, type TranscribeAudioOptions } from "./transcribe/transcribe.js";
+export {
+  ensureWhisper,
+  ensureModel,
+  locateWhisper,
+  downloadWhisper,
+  whisperDir,
+  modelsDir,
+  modelPath,
+} from "./transcribe/whisperLocal.js";
+export { API_PROVIDERS, type ApiProviderName } from "./transcribe/api.js";
+export { segmentsToSrt } from "./subtitles/srt.js";

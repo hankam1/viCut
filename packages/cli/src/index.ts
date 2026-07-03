@@ -6,6 +6,7 @@ import { registerPreset } from "./commands/preset.js";
 import { registerProbe } from "./commands/probe.js";
 import { registerRender } from "./commands/render.js";
 import { registerSetup } from "./commands/setup.js";
+import { registerTranscribe } from "./commands/transcribe.js";
 
 const program = new Command();
 
@@ -19,6 +20,7 @@ registerProbe(program);
 registerPreset(program);
 registerConfig(program);
 registerRender(program);
+registerTranscribe(program);
 
 program.parseAsync().catch((error: unknown) => {
   console.error(pc.red("Error:"), error instanceof Error ? error.message : error);

@@ -1,19 +1,14 @@
-import fs from "node:fs";
 import fsp from "node:fs/promises";
 import path from "node:path";
-import { Readable } from "node:stream";
-import { pipeline } from "node:stream/promises";
-import type { ReadableStream as WebReadableStream } from "node:stream/web";
+import {
+  downloadFile,
+  extractArchive,
+  findFileRecursive,
+  type ProgressCallback,
+} from "../net/download.js";
 import { binDir, dataDir } from "../platform/paths.js";
-import { run } from "./run.js";
 
-export interface DownloadProgress {
-  file: string;
-  receivedBytes: number;
-  totalBytes: number | null;
-}
-
-export type ProgressCallback = (progress: DownloadProgress) => void;
+export type { DownloadProgress, ProgressCallback } from "../net/download.js";
 
 interface ArchiveSource {
   url: string;
@@ -74,34 +69,7 @@ function sourcesForPlatform(): ArchiveSource[] {
   }
 }
 
-async function downloadFile(url: string, dest: string, onProgress?: ProgressCallback): Promise<void> {
-  const response = await fetch(url, { redirect: "follow" });
-  if (!response.ok || !response.body) {
-    throw new Error(`Download failed: ${url} → HTTP ${response.status}`);
-  }
-  const totalBytes = Number(response.headers.get("content-length")) || null;
-  const file = path.basename(new URL(url).pathname);
-  let receivedBytes = 0;
-
-  const body = Readable.fromWeb(response.body as WebReadableStream);
-  body.on("data", (chunk: Buffer) => {
-    receivedBytes += chunk.length;
-    onProgress?.({ file, receivedBytes, totalBytes });
-  });
-  await pipeline(body, fs.createWriteStream(dest));
-}
-
-async function findFile(root: string, name: string): Promise<string | null> {
-  const entries = await fsp.readdir(root, { withFileTypes: true, recursive: true });
-  const match = entries.find((entry) => entry.isFile() && entry.name === name);
-  return match ? path.join(match.parentPath, match.name) : null;
-}
-
-/**
- * Download FFmpeg + ffprobe for the current platform into ViCut's bin dir.
- * Archives are extracted with the system `tar` (bsdtar handles .zip on
- * Windows 10+ and macOS out of the box).
- */
+/** Download FFmpeg + ffprobe for the current platform into ViCut's bin dir. */
 export async function downloadFfmpeg(
   onProgress?: ProgressCallback,
 ): Promise<{ ffmpeg: string; ffprobe: string }> {
@@ -117,11 +85,10 @@ export async function downloadFfmpeg(
       await downloadFile(source.url, archivePath, onProgress);
 
       const extractDir = `${archivePath}-extracted`;
-      await fsp.mkdir(extractDir, { recursive: true });
-      await run("tar", ["-xf", archivePath, "-C", extractDir]);
+      await extractArchive(archivePath, extractDir);
 
       for (const binary of source.binaries) {
-        const found = await findFile(extractDir, binary);
+        const found = await findFileRecursive(extractDir, binary);
         if (!found) throw new Error(`${binary} not found inside archive from ${source.url}`);
         const target = path.join(bin, binary);
         await fsp.copyFile(found, target);
