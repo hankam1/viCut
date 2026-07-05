@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Copy, Lock, Plus } from "lucide-react";
 import type { Preset } from "@vicut/core";
 import { Button } from "../components/Button.js";
+import { FontSelect } from "../components/FontSelect.js";
 import {
   OutputParams,
   paramsFromPreset,
@@ -9,6 +10,7 @@ import {
   type OutputField,
   type OutputParamsValue,
 } from "../components/OutputParams.js";
+import { TextStylePresets } from "../components/TextStylePresets.js";
 import { Section } from "../components/Section.js";
 import { Segmented } from "../components/Segmented.js";
 import { Slider } from "../components/Slider.js";
@@ -116,6 +118,16 @@ export function PresetsView() {
     await refresh();
     select(copy);
     toast(`Создан пресет ${copy.name}`);
+  };
+
+  const updateStyle = (patch: Partial<Preset["subtitles"]["style"]>): void => {
+    if (!current) return;
+    update({
+      subtitles: {
+        ...current.subtitles,
+        style: { ...current.subtitles.style, ...patch },
+      },
+    });
   };
 
   const outputParams = current ? paramsFromPreset(current) : null;
@@ -272,33 +284,25 @@ export function PresetsView() {
                   </div>
                   <div className="flex items-center gap-3">
                     <span className="w-28 shrink-0 text-[12px] text-muted">Шрифт</span>
-                    <input
+                    <FontSelect
                       value={current.subtitles.style.fontFamily}
-                      onChange={(event) =>
-                        update({
-                          subtitles: {
-                            ...current.subtitles,
-                            style: { ...current.subtitles.style, fontFamily: event.target.value },
-                          },
-                        })
-                      }
-                      spellCheck={false}
-                      className="h-7 w-44 rounded-md border border-border bg-surface-2 px-2 text-[12px] text-text outline-none focus:border-accent"
+                      onChange={(fontFamily) => updateStyle({ fontFamily })}
                     />
                     <label className="flex items-center gap-2 text-[12px] text-muted">
                       <Toggle
                         label="Жирный"
                         checked={current.subtitles.style.bold}
-                        onChange={(bold) =>
-                          update({
-                            subtitles: {
-                              ...current.subtitles,
-                              style: { ...current.subtitles.style, bold },
-                            },
-                          })
-                        }
+                        onChange={(bold) => updateStyle({ bold })}
                       />
                       Жирный
+                    </label>
+                    <label className="flex items-center gap-2 text-[12px] text-muted">
+                      <Toggle
+                        label="Заглавными"
+                        checked={current.subtitles.style.uppercase}
+                        onChange={(uppercase) => updateStyle({ uppercase })}
+                      />
+                      Заглавными
                     </label>
                   </div>
                   <Slider
@@ -308,15 +312,12 @@ export function PresetsView() {
                     max={96}
                     step={2}
                     neutral={48}
-                    onChange={(fontSize) =>
-                      update({
-                        subtitles: {
-                          ...current.subtitles,
-                          style: { ...current.subtitles.style, fontSize },
-                        },
-                      })
-                    }
+                    onChange={(fontSize) => updateStyle({ fontSize })}
                   />
+                  <div className="flex items-start gap-3">
+                    <span className="w-28 shrink-0 pt-1.5 text-[12px] text-muted">Стиль текста</span>
+                    <TextStylePresets style={current.subtitles.style} onApply={updateStyle} />
+                  </div>
                   <div className="flex items-center gap-3">
                     <span className="w-28 shrink-0 text-[12px] text-muted">Цвет / обводка</span>
                     <input
@@ -324,15 +325,7 @@ export function PresetsView() {
                       aria-label="Цвет текста"
                       value={current.subtitles.style.primaryColor.slice(0, 7)}
                       onChange={(event) =>
-                        update({
-                          subtitles: {
-                            ...current.subtitles,
-                            style: {
-                              ...current.subtitles.style,
-                              primaryColor: event.target.value.toUpperCase(),
-                            },
-                          },
-                        })
+                        updateStyle({ primaryColor: event.target.value.toUpperCase() })
                       }
                       className="h-7 w-10 cursor-pointer rounded-md border border-border bg-surface-2"
                     />
@@ -341,15 +334,7 @@ export function PresetsView() {
                       aria-label="Цвет обводки"
                       value={current.subtitles.style.outlineColor.slice(0, 7)}
                       onChange={(event) =>
-                        update({
-                          subtitles: {
-                            ...current.subtitles,
-                            style: {
-                              ...current.subtitles.style,
-                              outlineColor: event.target.value.toUpperCase(),
-                            },
-                          },
-                        })
+                        updateStyle({ outlineColor: event.target.value.toUpperCase() })
                       }
                       className="h-7 w-10 cursor-pointer rounded-md border border-border bg-surface-2"
                     />
@@ -362,15 +347,40 @@ export function PresetsView() {
                         { value: "top" as const, label: "Верх" },
                       ]}
                       value={current.subtitles.style.position}
-                      onChange={(position) =>
-                        update({
-                          subtitles: {
-                            ...current.subtitles,
-                            style: { ...current.subtitles.style, position },
-                          },
-                        })
-                      }
+                      onChange={(position) => updateStyle({ position })}
                     />
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <span className="w-28 shrink-0 text-[12px] text-muted">Анимация</span>
+                    <Segmented
+                      options={[
+                        { value: "none" as const, label: "Нет" },
+                        { value: "appear" as const, label: "Появление" },
+                        { value: "highlight" as const, label: "Подсветка" },
+                        { value: "appear-highlight" as const, label: "Оба" },
+                      ]}
+                      value={current.subtitles.style.animation}
+                      onChange={(animation) => updateStyle({ animation })}
+                    />
+                    {current.subtitles.style.animation !== "none" &&
+                      current.subtitles.style.animation !== "appear" && (
+                        <>
+                          <span className="shrink-0 text-[12px] text-muted">Цвет слова</span>
+                          <input
+                            type="color"
+                            aria-label="Цвет активного слова"
+                            value={current.subtitles.style.highlightColor.slice(0, 7)}
+                            onChange={(event) =>
+                              updateStyle({ highlightColor: event.target.value.toUpperCase() })
+                            }
+                            className="h-7 w-10 cursor-pointer rounded-md border border-border bg-surface-2"
+                          />
+                        </>
+                      )}
+                  </div>
+                  <div className="pl-[124px] text-[11.5px] text-faint">
+                    Появление — слова возникают по мере произнесения; подсветка — активное слово
+                    выделяется цветом.
                   </div>
                   <SubtitlePreview style={current.subtitles.style} />
                   <div className="flex items-center gap-6">
