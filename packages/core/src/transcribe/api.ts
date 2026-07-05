@@ -25,6 +25,7 @@ const CHUNK_SEC = 1200;
 interface ApiResponse {
   language?: string;
   segments?: Array<{ start: number; end: number; text: string }>;
+  words?: Array<{ word: string; start: number; end: number }>;
 }
 
 export interface ApiTranscribeOptions {
@@ -32,6 +33,8 @@ export interface ApiTranscribeOptions {
   apiKey: string;
   /** ISO 639-1 code or "auto". */
   language: string;
+  /** Request word-level timing (needed for text animation). */
+  wordTimestamps?: boolean;
   ffmpegPath: string;
   durationSec: number;
   tmpDir: string;
@@ -74,6 +77,10 @@ export async function transcribeViaApi(
     form.append("response_format", "verbose_json");
     form.append("temperature", "0");
     if (options.language !== "auto") form.append("language", options.language);
+    if (options.wordTimestamps) {
+      form.append("timestamp_granularities[]", "word");
+      form.append("timestamp_granularities[]", "segment");
+    }
 
     const response = await fetch(`${spec.baseUrl}/audio/transcriptions`, {
       method: "POST",
@@ -89,15 +96,24 @@ export async function transcribeViaApi(
 
     const json = (await response.json()) as ApiResponse;
     language ??= json.language ?? null;
+    const chunkWords = (json.words ?? [])
+      .map((word) => ({
+        startSec: word.start + chunkStartSec,
+        endSec: word.end + chunkStartSec,
+        text: word.word.trim(),
+      }))
+      .filter((word) => word.text.length > 0);
     for (const segment of json.segments ?? []) {
       const text = segment.text.trim();
-      if (text) {
-        segments.push({
-          startSec: segment.start + chunkStartSec,
-          endSec: segment.end + chunkStartSec,
-          text,
-        });
-      }
+      if (!text) continue;
+      const startSec = segment.start + chunkStartSec;
+      const endSec = segment.end + chunkStartSec;
+      // A word belongs to the segment containing its midpoint.
+      const words = chunkWords.filter((word) => {
+        const mid = (word.startSec + word.endSec) / 2;
+        return mid >= startSec && mid < endSec;
+      });
+      segments.push({ startSec, endSec, text, ...(words.length > 0 ? { words } : {}) });
     }
     await fsp.rm(mp3Path, { force: true });
   }

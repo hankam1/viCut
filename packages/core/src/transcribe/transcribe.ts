@@ -16,6 +16,10 @@ export interface TranscribeAudioOptions {
   /** whisper.cpp model for local transcription. */
   model: string;
   durationSec: number;
+  /** Request word-level timing (needed for text animation). */
+  wordTimestamps?: boolean;
+  /** Line capacity used to regroup words into display segments (local whisper). */
+  maxSegmentChars?: number;
   tools: Tools;
   onProgress?: (progress: TranscribeProgress) => void;
 }
@@ -52,6 +56,7 @@ export async function transcribeAudio(
         provider,
         apiKey,
         language: options.language,
+        wordTimestamps: options.wordTimestamps,
         ffmpegPath: options.tools.ffmpeg.path,
         durationSec: options.durationSec,
         tmpDir,
@@ -65,6 +70,8 @@ export async function transcribeAudio(
   return transcribeWhisperLocal(wavPath, {
     model: options.model,
     language: options.language,
+    wordTimestamps: options.wordTimestamps,
+    maxSegmentChars: options.maxSegmentChars,
     onProgress: options.onProgress,
   });
 }

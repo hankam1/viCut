@@ -11,6 +11,7 @@ import {
 } from "../net/download.js";
 import { binDir, dataDir } from "../platform/paths.js";
 import type { Transcript, TranscribeProgress } from "./types.js";
+import { groupWordsIntoSegments } from "./words.js";
 
 const EXE = process.platform === "win32" ? ".exe" : "";
 const WHISPER_RELEASE = "v1.9.1";
@@ -135,6 +136,10 @@ export interface WhisperLocalOptions {
   model: string;
   /** ISO 639-1 code or "auto". */
   language: string;
+  /** Emit word-level timing (needed for text animation). */
+  wordTimestamps?: boolean;
+  /** Line capacity used to regroup words into display segments. */
+  maxSegmentChars?: number;
   onProgress?: (progress: TranscribeProgress) => void;
 }
 
@@ -155,6 +160,8 @@ export async function transcribeWhisperLocal(
 
   const outPrefix = `${wavPath}.whisper`;
   const threads = Math.max(1, os.cpus().length - 2);
+  // Word timing: one word per segment (-ml 1 -sow), regrouped into lines below.
+  const wordArgs = options.wordTimestamps ? ["-ml", "1", "-sow"] : [];
   await run(
     binary,
     [
@@ -166,6 +173,7 @@ export async function transcribeWhisperLocal(
       "-of", outPrefix,
       "-pp",
       "-np",
+      ...wordArgs,
     ],
     {
       onStderrLine: (line) => {
@@ -179,13 +187,17 @@ export async function transcribeWhisperLocal(
   const raw = JSON.parse(await fsp.readFile(jsonPath, "utf8")) as WhisperJsonOutput;
   await fsp.rm(jsonPath, { force: true });
 
-  const segments = (raw.transcription ?? [])
+  const entries = (raw.transcription ?? [])
     .map((entry) => ({
       startSec: (entry.offsets?.from ?? 0) / 1000,
       endSec: (entry.offsets?.to ?? 0) / 1000,
       text: (entry.text ?? "").trim(),
     }))
     .filter((segment) => segment.text.length > 0);
+
+  const segments = options.wordTimestamps
+    ? groupWordsIntoSegments(entries, { maxChars: options.maxSegmentChars })
+    : entries;
 
   return { language: raw.result?.language ?? null, segments };
 }

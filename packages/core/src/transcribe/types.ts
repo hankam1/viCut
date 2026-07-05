@@ -1,7 +1,15 @@
+export interface TranscriptWord {
+  startSec: number;
+  endSec: number;
+  text: string;
+}
+
 export interface TranscriptSegment {
   startSec: number;
   endSec: number;
   text: string;
+  /** Word-level timing, present when the transcription requested it. */
+  words?: TranscriptWord[];
 }
 
 export interface Transcript {
