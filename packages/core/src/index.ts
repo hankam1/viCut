@@ -81,6 +81,9 @@ export {
 } from "./render/spec.js";
 export {
   renderJob,
+  prepareRender,
+  encodeRender,
+  type PreparedRender,
   type RenderRequest,
   type RenderResult,
   type RenderOptions,

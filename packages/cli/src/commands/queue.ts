@@ -118,16 +118,22 @@ export function registerQueue(program: Command): void {
       const store = new QueueStore();
       try {
         let progress: ReturnType<typeof makeProgressRenderer> | null = null;
+        let currentJobId: number | null = null;
         const started = Date.now();
         const summary = await runQueue(store, tools, {
           onJobStart: (job) => {
+            currentJobId = job.id;
             progress = makeProgressRenderer();
             console.log(
               `\n${pc.bold(`▶ job #${job.id}`)} ${job.title} ` +
                 pc.dim(`(${job.inputs.length} clip${job.inputs.length > 1 ? "s" : ""} → ${job.output})`),
             );
           },
-          onJobProgress: (_job, event) => progress?.onEvent(event),
+          // Подготовка следующей задачи идёт параллельно — её события в
+          // однострочный прогресс не пускаем.
+          onJobProgress: (job, event) => {
+            if (job.id === currentJobId) progress?.onEvent(event);
+          },
           onJobDone: (_job, result) => {
             progress?.finish();
             console.log(

@@ -19,7 +19,7 @@ import {
   presetSchema,
   probe,
   QueueStore,
-  renderJob,
+  runQueue,
   naturalCompare,
   saveConfig,
   savePreset,
@@ -91,49 +91,32 @@ function defaultOutputPath(inputs: string[], title?: string): string {
   return candidate;
 }
 
-/** Последовательный цикл очереди с поддержкой «пауза после текущей». */
+/**
+ * Цикл очереди с поддержкой «пауза после текущей». Кодирование строго
+ * последовательное, но подготовка следующей задачи (анализ, громкость,
+ * транскрипция) идёт параллельно с кодированием текущей — см. runQueue.
+ */
 async function runQueueLoop(): Promise<void> {
   if (queueRunning) return;
   queueRunning = true;
   pauseRequested = false;
   broadcast("queue:running-changed", true);
-  const s = getStore();
-  s.resetInterrupted();
 
   try {
     tools ??= await ensureTools();
-    for (;;) {
-      if (pauseRequested) break;
-      const job = s.nextPending();
-      if (!job) break;
-
-      s.markRunning(job.id);
-      broadcast("queue:changed");
-
-      let lastPersist = 0;
-      try {
-        const result = await renderJob(
-          { spec: job.spec, output: job.output, preset: job.preset },
-          {
-            tools,
-            onProgress: (event) => {
-              const now = Date.now();
-              if (now - lastPersist >= 400) {
-                lastPersist = now;
-                s.updateProgress(job.id, event.stage, event.percent ?? 0);
-              }
-              broadcast("queue:job-progress", { jobId: job.id, ...event });
-            },
-          },
-        );
-        s.markDone(job.id);
+    await runQueue(getStore(), tools, {
+      shouldPause: () => pauseRequested,
+      onJobStart: () => broadcast("queue:changed"),
+      onJobProgress: (job, event) => broadcast("queue:job-progress", { jobId: job.id, ...event }),
+      onJobDone: (job, result) => {
         broadcast("queue:job-finished", { jobId: job.id, ok: true, srtPath: result.srtPath });
-      } catch (error) {
-        s.markFailed(job.id, error instanceof Error ? error.message : String(error));
+        broadcast("queue:changed");
+      },
+      onJobFailed: (job) => {
         broadcast("queue:job-finished", { jobId: job.id, ok: false });
-      }
-      broadcast("queue:changed");
-    }
+        broadcast("queue:changed");
+      },
+    });
   } finally {
     queueRunning = false;
     broadcast("queue:running-changed", false);

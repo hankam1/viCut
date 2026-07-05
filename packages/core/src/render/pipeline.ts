@@ -81,21 +81,41 @@ function parseLoudnorm(stderr: string): LoudnormMeasured {
 }
 
 /**
- * Render a job end to end: probe inputs, one audio prepass (loudness
- * measurement + transcription WAV), transcribe and build subtitles when the
- * preset asks for them, then encode. Works for both stitch and audio-driven
- * jobs — only the graph construction differs.
+ * Everything before encoding, ready to be run ahead of time (e.g. while the
+ * previous job is still encoding): probed inputs, loudness measurement,
+ * transcript and subtitle files.
  */
-export async function renderJob(
+export interface PreparedRender {
+  request: RenderRequest;
+  measured: LoudnormMeasured | null;
+  assPath: string | null;
+  srtPath: string | null;
+  transcript: Transcript | null;
+  makeGraph: (opts: {
+    audioOnly?: boolean;
+    assPath?: string | null;
+    loudnorm?: LoudnormMode;
+  }) => Promise<BuiltGraph>;
+  /** Remove the temp files; encodeRender does this itself. */
+  cleanup: () => Promise<void>;
+}
+
+/**
+ * Prepare a job: probe inputs, one audio prepass (loudness measurement +
+ * transcription WAV), transcribe and build subtitles when the preset asks for
+ * them. Works for both stitch and audio-driven jobs.
+ */
+export async function prepareRender(
   request: RenderRequest,
   options: RenderOptions,
-): Promise<RenderResult> {
+): Promise<PreparedRender> {
   const { preset, spec } = request;
   const emit = (stage: RenderStage, percent: number | null, detail?: string): void =>
     options.onProgress?.({ stage, percent, detail });
 
   const tmpDir = path.join(dataDir(), "tmp", `render-${crypto.randomUUID()}`);
   await fsp.mkdir(tmpDir, { recursive: true });
+  const cleanup = (): Promise<void> => fsp.rm(tmpDir, { recursive: true, force: true });
 
   try {
     // ── Анализ исходников ──
@@ -197,7 +217,24 @@ export async function renderJob(
       }
     }
 
-    // ── Кодирование ──
+    return { request, measured, assPath, srtPath, transcript, makeGraph, cleanup };
+  } catch (error) {
+    await cleanup();
+    throw error;
+  }
+}
+
+/** Encode a prepared job; always removes the prepared temp files. */
+export async function encodeRender(
+  prepared: PreparedRender,
+  options: RenderOptions,
+): Promise<RenderResult> {
+  const { request, measured, assPath, srtPath, transcript } = prepared;
+  const { preset } = request;
+  const emit = (stage: RenderStage, percent: number | null, detail?: string): void =>
+    options.onProgress?.({ stage, percent, detail });
+
+  try {
     const encoder = await selectEncoder(
       options.tools.ffmpeg.path,
       preset.output.videoCodec,
@@ -206,7 +243,7 @@ export async function renderJob(
     );
 
     emit("encode", 0, encoder.name);
-    const graph = await makeGraph({
+    const graph = await prepared.makeGraph({
       assPath,
       loudnorm: measured ? { mode: "apply", measured } : null,
     });
@@ -238,6 +275,17 @@ export async function renderJob(
       language: transcript?.language ?? null,
     };
   } finally {
-    await fsp.rm(tmpDir, { recursive: true, force: true });
+    await prepared.cleanup();
   }
+}
+
+/**
+ * Render a job end to end: prepare (probe, audio prepass, transcription,
+ * subtitles), then encode.
+ */
+export async function renderJob(
+  request: RenderRequest,
+  options: RenderOptions,
+): Promise<RenderResult> {
+  return encodeRender(await prepareRender(request, options), options);
 }
