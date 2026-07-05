@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
-import { Check, Download, FolderOpen, RefreshCw } from "lucide-react";
+import { Check, Download, FolderOpen, RefreshCw, Rocket } from "lucide-react";
 import type { Config } from "@vicut/core";
-import type { ToolsStatus } from "../../../preload/index.js";
+import type { ToolsStatus, UpdateState } from "../../../preload/index.js";
 import { Button } from "../components/Button.js";
 import { Section } from "../components/Section.js";
 import { Segmented } from "../components/Segmented.js";
@@ -42,6 +42,25 @@ function StatusRow({
   );
 }
 
+/** Статус обновления → строка под кнопками. */
+function updateStatusText(status: UpdateState | null, version: string): string {
+  if (!status) return `ViCut ${version}`;
+  switch (status.state) {
+    case "checking":
+      return "Проверяем…";
+    case "none":
+      return `ViCut ${version} — это последняя версия`;
+    case "available":
+      return `Доступна версия ${status.version}`;
+    case "downloading":
+      return `Скачивание ${status.version}… ${status.percent !== null ? `${Math.floor(status.percent)}%` : ""}`;
+    case "ready":
+      return `Версия ${status.version} скачана — можно установить`;
+    case "error":
+      return `Не получилось проверить: ${status.error}`;
+  }
+}
+
 export function SettingsView() {
   const toast = useToast();
   const [config, setConfig] = useState<Config>({});
@@ -50,6 +69,8 @@ export function SettingsView() {
   const [model, setModel] = useState("large-v3-turbo");
   const [busy, setBusy] = useState<string | null>(null);
   const [downloadNote, setDownloadNote] = useState<string | null>(null);
+  const [appVersion, setAppVersion] = useState("");
+  const [updateStatus, setUpdateStatus] = useState<UpdateState | null>(null);
 
   const refreshTools = (): void => {
     void window.vicut.tools.status().then(setTools);
@@ -57,12 +78,21 @@ export function SettingsView() {
 
   useEffect(() => {
     void window.vicut.config.get().then(setConfig);
+    void window.vicut.updates.version().then(setAppVersion);
+    void window.vicut.updates.lastStatus().then((status) => status && setUpdateStatus(status));
     refreshTools();
-    return window.vicut.on("setup:progress", (payload) => {
+    const offSetup = window.vicut.on("setup:progress", (payload) => {
       const p = payload as { kind: string; file: string; receivedBytes: number; totalBytes: number | null };
       const percent = p.totalBytes ? ` ${Math.floor((p.receivedBytes / p.totalBytes) * 100)}%` : "";
       setDownloadNote(`${p.file}${percent}`);
     });
+    const offUpdates = window.vicut.on("updates:status", (payload) =>
+      setUpdateStatus(payload as UpdateState),
+    );
+    return () => {
+      offSetup();
+      offUpdates();
+    };
   }, []);
 
   const saveConfig = (patch: Partial<Config>): void => {
@@ -197,6 +227,41 @@ export function SettingsView() {
             {busy === "ffmpeg" && downloadNote && (
               <div className="tnum pl-[124px] text-[11.5px] text-muted">{downloadNote}</div>
             )}
+          </div>
+        </Section>
+
+        <Section title="Обновления">
+          <div className="flex flex-col gap-3.5">
+            <div className="flex items-center gap-3">
+              <span className="w-28 shrink-0 text-[12px] text-muted">Версия</span>
+              <span className="min-w-0 flex-1 truncate text-[12px]">
+                {updateStatusText(updateStatus, appVersion)}
+              </span>
+              {updateStatus?.state === "available" && updateStatus.canAutoInstall ? (
+                <Button variant="primary" onClick={() => void window.vicut.updates.download()}>
+                  <Download size={13} strokeWidth={1.5} /> Скачать обновление
+                </Button>
+              ) : updateStatus?.state === "available" ? (
+                <Button variant="primary" onClick={() => void window.vicut.updates.install()}>
+                  <Rocket size={13} strokeWidth={1.5} /> Открыть страницу релиза
+                </Button>
+              ) : updateStatus?.state === "ready" ? (
+                <Button variant="primary" onClick={() => void window.vicut.updates.install()}>
+                  <Rocket size={13} strokeWidth={1.5} /> Установить и перезапустить
+                </Button>
+              ) : (
+                <Button
+                  disabled={updateStatus?.state === "checking" || updateStatus?.state === "downloading"}
+                  onClick={() => void window.vicut.updates.check()}
+                >
+                  <RefreshCw size={13} strokeWidth={1.5} /> Проверить
+                </Button>
+              )}
+            </div>
+            <div className="pl-[124px] text-[11.5px] text-faint">
+              Обновления берутся из GitHub Releases. На Windows установщик скачивается и
+              запускается сам, на macOS откроется страница загрузки.
+            </div>
           </div>
         </Section>
 

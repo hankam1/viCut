@@ -46,12 +46,21 @@ export interface ToolsStatus {
   models: string[];
 }
 
+export type UpdateState =
+  | { state: "checking" }
+  | { state: "none"; version: string }
+  | { state: "available"; version: string; canAutoInstall: boolean }
+  | { state: "downloading"; version: string; percent: number | null }
+  | { state: "ready"; version: string }
+  | { state: "error"; error: string };
+
 const EVENT_CHANNELS = [
   "queue:changed",
   "queue:job-progress",
   "queue:job-finished",
   "queue:running-changed",
   "setup:progress",
+  "updates:status",
   "debug:open-wizard",
   "debug:open-view",
 ] as const;
@@ -125,6 +134,13 @@ const api = {
   shell: {
     showItem: (path: string): Promise<void> => ipcRenderer.invoke("shell:show-item", path),
     openPath: (path: string): Promise<void> => ipcRenderer.invoke("shell:open-path", path),
+  },
+  updates: {
+    version: (): Promise<string> => ipcRenderer.invoke("app:version"),
+    check: (): Promise<UpdateState> => ipcRenderer.invoke("updates:check"),
+    download: (): Promise<UpdateState> => ipcRenderer.invoke("updates:download"),
+    install: (): Promise<void> => ipcRenderer.invoke("updates:install"),
+    lastStatus: (): Promise<UpdateState | null> => ipcRenderer.invoke("updates:last-status"),
   },
 };
 

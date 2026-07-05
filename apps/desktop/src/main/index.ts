@@ -1,10 +1,12 @@
 import path from "node:path";
 import { app, BrowserWindow, ipcMain } from "electron";
 import { registerEngineIpc } from "./engine.js";
+import { registerUpdatesIpc } from "./updates.js";
 
 const rendererUrl = process.env["ELECTRON_RENDERER_URL"];
 
 registerEngineIpc();
+registerUpdatesIpc();
 
 ipcMain.on("window:minimize", (event) => {
   BrowserWindow.fromWebContents(event.sender)?.minimize();
