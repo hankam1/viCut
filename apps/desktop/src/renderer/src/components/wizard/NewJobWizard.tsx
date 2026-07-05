@@ -26,6 +26,11 @@ import {
 
 type JobType = "stitch" | "audio";
 
+/** Пути из drag&drop; папки разворачивает media.classify. */
+function pathsFromDrop(event: React.DragEvent): string[] {
+  return Array.from(event.dataTransfer.files).map((file) => window.vicut.getPathForFile(file));
+}
+
 interface WFile {
   path: string;
   durationSec: number | null;
@@ -151,6 +156,8 @@ export function NewJobWizard({
   );
   const dragIndex = useRef<number | null>(null);
   const [maxSourceHeight, setMaxSourceHeight] = useState<number | null>(null);
+  /** Подсвеченная под drag&drop цель: "clips" | "<sectionId>:audio" | "<sectionId>:visuals". */
+  const [dropTarget, setDropTarget] = useState<string | null>(null);
 
   /** Длительность файла подтягивается асинхронно и во все места сразу. */
   const probeDuration = (filePath: string): void => {
@@ -287,29 +294,78 @@ export function NewJobWizard({
     });
   };
 
+  const addVisualPaths = async (section: WSection, paths: string[]): Promise<void> => {
+    if (paths.length === 0) return;
+    const { clips: vids, images } = await window.vicut.media.classify(paths);
+    if (vids.length === 0 && images.length === 0) {
+      toast("Нет подходящих клипов или картинок");
+      return;
+    }
+    const incomingKind = vids.length >= images.length ? "clips" : "images";
+    const incoming = incomingKind === "clips" ? vids : images;
+    if (vids.length > 0 && images.length > 0) {
+      toast("В одной секции — либо клипы, либо картинки");
+      return;
+    }
+    if (section.kind && section.kind !== incomingKind && section.visuals.length > 0) {
+      toast(`В этой секции уже ${section.kind === "clips" ? "клипы" : "картинки"}`);
+      return;
+    }
+    patchSection(section.id, {
+      kind: incomingKind,
+      visuals: [...section.visuals, ...makeFiles(incoming, incomingKind === "clips")],
+    });
+  };
+
   const addSectionVisuals = (section: WSection, viaFolder: boolean): void => {
     const pick = viaFolder
       ? window.vicut.dialog.pickFolder().then((dir) => (dir ? [dir] : []))
       : window.vicut.dialog.pickVisuals();
-    void pick.then(async (paths) => {
-      if (paths.length === 0) return;
-      const { clips: vids, images } = await window.vicut.media.classify(paths);
-      const incomingKind = vids.length >= images.length ? "clips" : "images";
-      const incoming = incomingKind === "clips" ? vids : images;
-      if (vids.length > 0 && images.length > 0) {
-        toast("В одной секции — либо клипы, либо картинки");
-        return;
-      }
-      if (section.kind && section.kind !== incomingKind && section.visuals.length > 0) {
-        toast(`В этой секции уже ${section.kind === "clips" ? "клипы" : "картинки"}`);
-        return;
-      }
-      patchSection(section.id, {
-        kind: incomingKind,
-        visuals: [...section.visuals, ...makeFiles(incoming, incomingKind === "clips")],
-      });
+    void pick.then((paths) => addVisualPaths(section, paths));
+  };
+
+  const dropSectionAudio = async (id: number, paths: string[]): Promise<void> => {
+    const { audios } = await window.vicut.media.classify(paths);
+    if (audios.length === 0) {
+      toast("Сюда нужен аудиофайл");
+      return;
+    }
+    patchSection(id, { audio: makeFiles([audios[0]!], true)[0]! });
+    if (audios.length > 1) toast("Аудио несколько — взят первый файл");
+  };
+
+  const dropStitchClips = async (paths: string[]): Promise<void> => {
+    const { clips: vids } = await window.vicut.media.classify(paths);
+    if (vids.length === 0) {
+      toast("Сюда нужны видеоклипы");
+      return;
+    }
+    setClips((prev) => {
+      const known = new Set(prev.map((f) => f.path));
+      return [...prev, ...makeFiles(vids.filter((p) => !known.has(p)), true)];
     });
   };
+
+  /** Пропсы drag&drop для слота: подсветка цели + обработка брошенных путей. */
+  const slotDropProps = (key: string, handle: (paths: string[]) => void) => ({
+    onDragOver: (event: React.DragEvent): void => {
+      event.preventDefault();
+      event.stopPropagation();
+      setDropTarget(key);
+    },
+    onDragLeave: (): void => setDropTarget((prev) => (prev === key ? null : prev)),
+    onDrop: (event: React.DragEvent): void => {
+      event.preventDefault();
+      event.stopPropagation();
+      setDropTarget(null);
+      handle(pathsFromDrop(event));
+    },
+  });
+
+  const slotClass = (key: string): string =>
+    `-mx-1.5 rounded-md border border-dashed px-1.5 py-1 transition-colors duration-[var(--vc-dur-fast)] ${
+      dropTarget === key ? "border-accent bg-accent-soft/40" : "border-transparent"
+    }`;
 
   const sectionsReady =
     sections.length > 0 &&
@@ -373,8 +429,13 @@ export function NewJobWizard({
           />
 
           {jobType === "stitch" ? (
-            <>
+            <div {...slotDropProps("clips", (paths) => void dropStitchClips(paths))} className={slotClass("clips")}>
               <div className="flex flex-col gap-1.5">
+                {clips.length === 0 && (
+                  <div className="rounded-md border border-dashed border-border px-3 py-4 text-center text-[12px] text-faint">
+                    Перетащи клипы сюда
+                  </div>
+                )}
                 {clips.map((file, index) => (
                   <div
                     key={file.path}
@@ -407,11 +468,11 @@ export function NewJobWizard({
                   </div>
                 ))}
               </div>
-              <div className="text-[12px] text-muted">
+              <div className="mt-1.5 text-[12px] text-muted">
                 {clips.length} клип{clips.length === 1 ? "" : clips.length < 5 ? "а" : "ов"}
                 {probedAll && clips.length > 0 ? ` · ${formatDuration(totalClipsDuration)}` : ""}
               </div>
-            </>
+            </div>
           ) : (
             <div className="flex flex-col gap-2.5">
               {sections.map((section, index) => {
@@ -445,7 +506,12 @@ export function NewJobWizard({
                     </div>
 
                     {/* Слот аудио — «хозяин» длительности секции */}
-                    <div className="flex items-center gap-2">
+                    <div
+                      {...slotDropProps(`${section.id}:audio`, (paths) =>
+                        void dropSectionAudio(section.id, paths),
+                      )}
+                      className={`flex items-center gap-2 ${slotClass(`${section.id}:audio`)}`}
+                    >
                       <Music size={14} strokeWidth={1.5} className="shrink-0 text-faint" />
                       {section.audio ? (
                         <>
@@ -479,7 +545,12 @@ export function NewJobWizard({
                     </div>
 
                     {/* Слот визуала */}
-                    <div className="flex items-center gap-2">
+                    <div
+                      {...slotDropProps(`${section.id}:visuals`, (paths) =>
+                        void addVisualPaths(section, paths),
+                      )}
+                      className={`flex items-center gap-2 ${slotClass(`${section.id}:visuals`)}`}
+                    >
                       <Images size={14} strokeWidth={1.5} className="shrink-0 text-faint" />
                       {section.visuals.length > 0 ? (
                         <>
@@ -512,6 +583,7 @@ export function NewJobWizard({
                           <Button variant="ghost" onClick={() => addSectionVisuals(section, true)}>
                             <FolderOpen size={13} strokeWidth={1.5} /> Папка
                           </Button>
+                          <span className="text-[11.5px] text-faint">или перетащи сюда</span>
                         </>
                       )}
                     </div>
