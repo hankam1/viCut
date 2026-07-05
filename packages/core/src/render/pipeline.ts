@@ -156,11 +156,15 @@ export async function renderJob(
 
     if (subsEnabled && wavPath) {
       emit("transcribe", 0);
+      const style = preset.subtitles.style;
       transcript = await transcribeAudio(wavPath, {
         provider: preset.subtitles.provider,
         language: preset.subtitles.language,
         model: preset.subtitles.model,
         durationSec: prepassDurationSec,
+        // Пословный тайминг нужен только для анимации текста.
+        wordTimestamps: style.animation !== "none" && preset.subtitles.burnIn,
+        maxSegmentChars: style.maxLineChars * style.maxLines,
         tools: options.tools,
         onProgress: (p) => emit("transcribe", p.percent, p.detail ?? p.phase),
       });

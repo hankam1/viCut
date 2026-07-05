@@ -34,6 +34,33 @@ const BUILTIN_INPUTS: Record<string, PresetInput> = {
       },
     },
   },
+  // Стиль как в CapCut: КАПС, тяжёлая обводка, слова появляются по мере
+  // произнесения, активное слово подсвечено бирюзовым.
+  capcut: {
+    name: "capcut",
+    output: { quality: "high" },
+    audio: { normalize: true, targetLufs: -14 },
+    subtitles: {
+      enabled: true,
+      burnIn: true,
+      exportSrt: true,
+      style: {
+        fontFamily: "Arial",
+        fontSize: 56,
+        bold: true,
+        uppercase: true,
+        primaryColor: "#FFFFFF",
+        outlineColor: "#000000",
+        outlineWidth: 4,
+        shadow: 1,
+        animation: "appear-highlight",
+        highlightColor: "#2EC4B6",
+        position: "bottom",
+        maxLineChars: 24,
+        maxLines: 1,
+      },
+    },
+  },
 };
 
 export function builtinPresetNames(): string[] {

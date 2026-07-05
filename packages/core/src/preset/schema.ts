@@ -30,15 +30,26 @@ export const audioSchema = z.object({
   targetLufs: z.number().min(-70).max(-5).default(-14),
 });
 
+/** Word-level text animation, timed to speech (CapCut-style). */
+export const SUBTITLE_ANIMATIONS = ["none", "appear", "highlight", "appear-highlight"] as const;
+
 export const subtitleStyleSchema = z.object({
   fontFamily: z.string().default("Arial"),
   /** Font size at 1080p; scales proportionally with output height. */
   fontSize: z.number().int().min(8).max(200).default(48),
   bold: z.boolean().default(true),
+  uppercase: z.boolean().default(false),
   primaryColor: hexColor.default("#FFFFFF"),
   outlineColor: hexColor.default("#000000"),
   outlineWidth: z.number().min(0).max(10).default(3),
   shadow: z.number().min(0).max(10).default(0),
+  /**
+   * "appear" — words show up as they are spoken; "highlight" — the whole line
+   * is visible and the current word is colored; "appear-highlight" — both.
+   */
+  animation: z.enum(SUBTITLE_ANIMATIONS).default("none"),
+  /** Color of the currently spoken word in highlight animations. */
+  highlightColor: hexColor.default("#2EC4B6"),
   position: z.enum(["bottom", "center", "top"]).default("bottom"),
   /** Vertical margin from the screen edge, in pixels at 1080p. */
   marginVertical: z.number().int().min(0).max(400).default(64),
@@ -106,4 +117,5 @@ export const presetSchema = z.object({
 export type Preset = z.infer<typeof presetSchema>;
 export type PresetInput = z.input<typeof presetSchema>;
 export type SubtitleStyle = z.infer<typeof subtitleStyleSchema>;
+export type SubtitleAnimation = (typeof SUBTITLE_ANIMATIONS)[number];
 export type TransitionType = (typeof TRANSITION_TYPES)[number];

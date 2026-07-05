@@ -19,9 +19,11 @@ export {
   presetSchema,
   subtitleStyleSchema,
   TRANSITION_TYPES,
+  SUBTITLE_ANIMATIONS,
   type Preset,
   type PresetInput,
   type SubtitleStyle,
+  type SubtitleAnimation,
   type TransitionType,
 } from "./preset/schema.js";
 export { builtinPreset, builtinPresetNames } from "./preset/builtin.js";
@@ -87,9 +89,15 @@ export { downloadFile, extractArchive, findFileRecursive } from "./net/download.
 export type {
   Transcript,
   TranscriptSegment,
+  TranscriptWord,
   TranscriptionProviderName,
   TranscribeProgress,
 } from "./transcribe/types.js";
+export {
+  groupWordsIntoSegments,
+  approximateWords,
+  type GroupWordsOptions,
+} from "./transcribe/words.js";
 export { transcribeAudio, resolveProvider, type TranscribeAudioOptions } from "./transcribe/transcribe.js";
 export {
   ensureWhisper,
