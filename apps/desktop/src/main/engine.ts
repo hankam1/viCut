@@ -209,6 +209,43 @@ export function registerEngineIpc(): void {
   });
   ipcMain.handle("presets:save", async (_event, raw: unknown) => savePreset(presetSchema.parse(raw)));
 
+  // Экспорт/импорт пресетов для обмена (обычный JSON-файл).
+  ipcMain.handle("presets:export", async (event, raw: unknown) => {
+    const win = BrowserWindow.fromWebContents(event.sender);
+    if (!win) return null;
+    const preset = presetSchema.parse(raw);
+    const result = await dialog.showSaveDialog(win, {
+      defaultPath: `${preset.name}.vicut.json`,
+      filters: [{ name: "Пресет ViCut", extensions: ["json"] }],
+    });
+    if (result.canceled || !result.filePath) return null;
+    await fsp.writeFile(result.filePath, `${JSON.stringify(preset, null, 2)}\n`, "utf8");
+    return result.filePath;
+  });
+
+  ipcMain.handle("presets:import", async (event) => {
+    const win = BrowserWindow.fromWebContents(event.sender);
+    if (!win) return { ok: false as const, error: "нет окна" };
+    const result = await dialog.showOpenDialog(win, {
+      properties: ["openFile"],
+      filters: [{ name: "Пресет ViCut", extensions: ["json"] }],
+    });
+    const file = result.canceled ? null : result.filePaths[0];
+    if (!file) return { ok: false as const, error: null };
+    try {
+      const parsed = presetSchema.parse(JSON.parse(await fsp.readFile(file, "utf8")));
+      // Имя не должно конфликтовать с существующими пресетами.
+      const taken = new Set([...builtinPresetNames(), ...(await listUserPresets())]);
+      let name = parsed.name;
+      for (let i = 2; taken.has(name); i++) name = `${parsed.name}-${i}`;
+      const preset = { ...parsed, name };
+      await savePreset(preset);
+      return { ok: true as const, preset };
+    } catch {
+      return { ok: false as const, error: "Файл не похож на пресет ViCut" };
+    }
+  });
+
   // ── Конфиг ──
   ipcMain.handle("config:get", () => loadConfig());
   ipcMain.handle("config:set", (_event, config: Config) => saveConfig(config));

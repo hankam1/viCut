@@ -89,6 +89,13 @@ const api = {
   presets: {
     list: (): Promise<{ builtins: Preset[]; user: Preset[] }> => ipcRenderer.invoke("presets:list"),
     save: (preset: Preset): Promise<string> => ipcRenderer.invoke("presets:save", preset),
+    /** Сохранить пресет в .json по выбору пользователя; null — отменено. */
+    export: (preset: Preset): Promise<string | null> =>
+      ipcRenderer.invoke("presets:export", preset),
+    /** Импортировать .json; error: null — диалог отменён. */
+    import: (): Promise<
+      { ok: true; preset: Preset } | { ok: false; error: string | null }
+    > => ipcRenderer.invoke("presets:import"),
   },
   config: {
     get: (): Promise<Config> => ipcRenderer.invoke("config:get"),

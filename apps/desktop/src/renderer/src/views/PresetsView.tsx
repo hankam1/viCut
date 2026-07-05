@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Copy, Lock, Plus } from "lucide-react";
+import { Copy, Download, Lock, Plus, Upload } from "lucide-react";
 import type { Preset } from "@vicut/core";
 import { Button } from "../components/Button.js";
 import { FontSelect } from "../components/FontSelect.js";
@@ -120,6 +120,23 @@ export function PresetsView() {
     toast(`Создан пресет ${copy.name}`);
   };
 
+  const exportPreset = async (): Promise<void> => {
+    if (!current) return;
+    const file = await window.vicut.presets.export(current);
+    if (file) toast(`Экспортирован в ${file}`);
+  };
+
+  const importPreset = async (): Promise<void> => {
+    const result = await window.vicut.presets.import();
+    if (result.ok) {
+      await refresh();
+      select(result.preset);
+      toast(`Импортирован пресет ${result.preset.name}`);
+    } else if (result.error) {
+      toast(result.error);
+    }
+  };
+
   const updateStyle = (patch: Partial<Preset["subtitles"]["style"]>): void => {
     if (!current) return;
     update({
@@ -149,7 +166,13 @@ export function PresetsView() {
     <div className="flex h-full flex-col px-6 pb-6">
       <div className="flex h-14 shrink-0 items-center gap-3">
         <h1 className="text-[18px] font-semibold">Пресеты</h1>
-        <div className="ml-auto">
+        <div className="ml-auto flex items-center gap-2">
+          <Button onClick={() => void importPreset()}>
+            <Download size={13} strokeWidth={1.5} /> Импорт
+          </Button>
+          <Button disabled={!current} onClick={() => void exportPreset()}>
+            <Upload size={13} strokeWidth={1.5} /> Экспорт
+          </Button>
           <Button variant="primary" onClick={() => void createNew()}>
             <Plus size={14} strokeWidth={1.5} /> Новый пресет
           </Button>
