@@ -92,6 +92,16 @@ export const transitionSchema = z.object({
   durationSec: z.number().min(0.1).max(5).default(0.5),
 });
 
+/** Slideshow behavior for image sections in audio-driven jobs. */
+export const slideshowSchema = z.object({
+  /** Ken Burns: slow zoom on each image instead of a static frame. */
+  kenBurns: z.boolean().default(true),
+  /** Max zoom an image reaches (1.15 = +15%). */
+  zoom: z.number().min(1.02).max(2).default(1.15),
+  /** Zoom pace: 1 reaches max zoom exactly as the image ends; higher is faster, then holds. */
+  speed: z.number().min(0.25).max(4).default(1),
+});
+
 export const effectsSchema = z.object({
   /** Path to a .cube LUT file, applied to all clips. */
   lut: z.string().nullable().default(null),
@@ -112,10 +122,12 @@ export const presetSchema = z.object({
   subtitles: subtitlesSchema.prefault({}),
   transition: transitionSchema.prefault({}),
   effects: effectsSchema.prefault({}),
+  slideshow: slideshowSchema.prefault({}),
 });
 
 export type Preset = z.infer<typeof presetSchema>;
 export type PresetInput = z.input<typeof presetSchema>;
 export type SubtitleStyle = z.infer<typeof subtitleStyleSchema>;
+export type SlideshowSettings = z.infer<typeof slideshowSchema>;
 export type SubtitleAnimation = (typeof SUBTITLE_ANIMATIONS)[number];
 export type TransitionType = (typeof TRANSITION_TYPES)[number];

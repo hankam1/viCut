@@ -18,12 +18,14 @@ export type { MediaInfo, VideoStreamInfo, AudioStreamInfo } from "./probe/types.
 export {
   presetSchema,
   subtitleStyleSchema,
+  slideshowSchema,
   TRANSITION_TYPES,
   SUBTITLE_ANIMATIONS,
   type Preset,
   type PresetInput,
   type SubtitleStyle,
   type SubtitleAnimation,
+  type SlideshowSettings,
   type TransitionType,
 } from "./preset/schema.js";
 export { builtinPreset, builtinPresetNames } from "./preset/builtin.js";

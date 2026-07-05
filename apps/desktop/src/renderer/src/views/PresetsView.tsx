@@ -448,6 +448,47 @@ export function PresetsView() {
                 </div>
               </Section>
 
+              <Section
+                title="Слайдшоу"
+                aside={
+                  <Toggle
+                    label="Ken Burns"
+                    checked={current.slideshow.kenBurns}
+                    onChange={(kenBurns) =>
+                      update({ slideshow: { ...current.slideshow, kenBurns } })
+                    }
+                  />
+                }
+              >
+                <div className="flex flex-col gap-3">
+                  <Slider
+                    label="Сила зума"
+                    value={current.slideshow.zoom}
+                    min={1.05}
+                    max={1.6}
+                    step={0.05}
+                    neutral={1.15}
+                    format={(v) => `×${v.toFixed(2)}`}
+                    onChange={(zoom) => update({ slideshow: { ...current.slideshow, zoom } })}
+                  />
+                  <Slider
+                    label="Скорость зума"
+                    value={current.slideshow.speed}
+                    min={0.25}
+                    max={3}
+                    step={0.25}
+                    neutral={1}
+                    format={(v) => `×${v.toFixed(2)}`}
+                    onChange={(speed) => update({ slideshow: { ...current.slideshow, speed } })}
+                  />
+                  <div className="pl-[124px] text-[11.5px] text-faint">
+                    Медленный зум на картинках в режиме «Сборка под аудио»: чётные картинки
+                    приближаются, нечётные — отдаляются. Скорость ×1 — зум доходит до максимума
+                    ровно к смене картинки.
+                  </div>
+                </div>
+              </Section>
+
               <Section title="Эффекты" defaultOpen={false}>
                 <div className="flex flex-col gap-3">
                   <Slider

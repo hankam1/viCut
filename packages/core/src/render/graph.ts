@@ -294,6 +294,35 @@ function concatListPath(filePath: string): string {
 }
 
 /**
+ * Ken Burns for a uniform slideshow stream: zoompan whose zoom expression
+ * restarts on every image boundary (frames-per-image is constant within a
+ * section), alternating zoom-in / zoom-out per image. The stream is
+ * supersampled ×2 beforehand so the crop never upscales.
+ */
+function kenBurnsChain(target: TargetSpec, perImageSec: number, preset: Preset): string {
+  const ss = preset.slideshow;
+  const ssW = target.width * 2;
+  const ssH = target.height * 2;
+  const fpi = (perImageSec * target.fps).toFixed(4);
+  const z = ss.zoom.toFixed(3);
+  // Commas are safe: the whole expression is single-quoted for the graph
+  // parser. zoompan's frame counter is `in` (not the usual `n`).
+  // Progress within the current image, 0..1, scaled by speed and capped.
+  const p = `min(1,${ss.speed.toFixed(3)}*mod(in,${fpi})/${fpi})`;
+  const zoomExpr =
+    `if(eq(mod(floor(in/${fpi}),2),0),` +
+    `1+(${z}-1)*${p},` +
+    `${z}-(${z}-1)*${p})`;
+  return (
+    `scale=${ssW}:${ssH}:force_original_aspect_ratio=decrease,` +
+    `pad=${ssW}:${ssH}:(ow-iw)/2:(oh-ih)/2:color=black,fps=${target.fps},` +
+    `zoompan=z='${zoomExpr}':x='(iw-iw/zoom)/2':y='(ih-ih/zoom)/2'` +
+    `:d=1:s=${target.width}x${target.height}:fps=${target.fps},` +
+    `settb=AVTB,setsar=1,format=yuv420p`
+  );
+}
+
+/**
  * Build the graph for an audio-driven job: each section's audio track defines
  * its duration; clips are speed-fitted to end exactly with the audio, images
  * are spread evenly across it. Sections are then concatenated.
@@ -375,8 +404,11 @@ export async function buildAudioDrivenGraph(
         await fsp.writeFile(listPath, `${lines.join("\n")}\n`, "utf8");
 
         inputArgs.push("-f", "concat", "-safe", "0", "-i", listPath);
+        const imageChain = preset.slideshow.kenBurns
+          ? kenBurnsChain(target, perImage, preset)
+          : videoNormalizeChain(target);
         chains.push(
-          `[${inputIndex}:v]${videoNormalizeChain(target)},` +
+          `[${inputIndex}:v]${imageChain},` +
             `trim=duration=${audioDur.toFixed(3)},setpts=PTS-STARTPTS[v${si}]`,
         );
         inputIndex++;
