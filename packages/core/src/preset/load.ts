@@ -74,6 +74,23 @@ export async function savePreset(preset: Preset): Promise<string> {
   return filePath;
 }
 
+/** Rename a user preset: save under the new name, remove the old file. */
+export async function renamePreset(oldName: string, newName: string): Promise<Preset> {
+  const oldPath = path.join(presetsDir(), `${oldName}.json`);
+  if (!fs.existsSync(oldPath)) throw new PresetError(`user preset "${oldName}" not found`);
+  const preset = {
+    ...parsePresetJson(await fsp.readFile(oldPath, "utf8"), oldPath),
+    name: newName,
+  };
+  // Смена только регистра: на case-insensitive ФС сначала переименовать файл,
+  // иначе запись попадёт в тот же файл и удалять старый нельзя.
+  const caseOnly = oldName !== newName && oldName.toLowerCase() === newName.toLowerCase();
+  if (caseOnly) await fsp.rename(oldPath, path.join(presetsDir(), `${newName}.json`));
+  await savePreset(preset);
+  if (oldName.toLowerCase() !== newName.toLowerCase()) await fsp.rm(oldPath, { force: true });
+  return preset;
+}
+
 /** List user presets (names without .json) found in the presets dir. */
 export async function listUserPresets(): Promise<string[]> {
   const dir = presetsDir();

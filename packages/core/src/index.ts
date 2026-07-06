@@ -38,6 +38,7 @@ export {
 export {
   loadPreset,
   savePreset,
+  renamePreset,
   listUserPresets,
   presetsDir,
   PresetError,

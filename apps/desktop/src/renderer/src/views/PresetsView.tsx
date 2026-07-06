@@ -56,6 +56,7 @@ export function PresetsView() {
   const [userPresets, setUserPresets] = useState<Preset[]>([]);
   const [selectedName, setSelectedName] = useState<string | null>(null);
   const [current, setCurrent] = useState<Preset | null>(null);
+  const [nameDraft, setNameDraft] = useState("");
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const refresh = useCallback(async (): Promise<{ builtins: Preset[]; user: Preset[] }> => {
@@ -71,6 +72,7 @@ export function PresetsView() {
       if (first) {
         setSelectedName(first.name);
         setCurrent(first);
+        setNameDraft(first.name);
       }
     });
   }, [refresh]);
@@ -83,6 +85,26 @@ export function PresetsView() {
     if (saveTimer.current) clearTimeout(saveTimer.current);
     setSelectedName(preset.name);
     setCurrent(preset);
+    setNameDraft(preset.name);
+  };
+
+  /** Переименование: по blur/Enter, файл пресета переименовывается тоже. */
+  const commitRename = async (): Promise<void> => {
+    if (!current || builtinNames.has(current.name)) return;
+    const next = nameDraft.trim();
+    if (!next || next === current.name) {
+      setNameDraft(current.name);
+      return;
+    }
+    const result = await window.vicut.presets.rename(current.name, next);
+    if (result.ok) {
+      await refresh();
+      select(result.preset);
+      toast(`Переименован в ${result.preset.name}`);
+    } else {
+      setNameDraft(current.name);
+      toast(result.error);
+    }
   };
 
   /** Автосохранение: правка → 500 мс тишины → save + toast. */
@@ -217,6 +239,27 @@ export function PresetsView() {
             )}
 
             <div className={readonly ? "pointer-events-none flex flex-col gap-2.5 opacity-60" : "flex flex-col gap-2.5"}>
+              <div className="flex items-center gap-3 rounded-lg border border-border bg-surface px-4 py-2.5">
+                <span className="w-28 shrink-0 text-[12px] text-muted">Название</span>
+                <input
+                  value={nameDraft}
+                  onChange={(event) => setNameDraft(event.target.value)}
+                  onBlur={() => void commitRename()}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") event.currentTarget.blur();
+                    if (event.key === "Escape") {
+                      setNameDraft(current.name);
+                      event.currentTarget.blur();
+                    }
+                  }}
+                  spellCheck={false}
+                  className="h-7 w-64 rounded-md border border-border bg-surface-2 px-2 text-[12.5px] font-medium text-text outline-none focus:border-accent"
+                />
+                {nameDraft.trim() !== current.name && (
+                  <span className="text-[11.5px] text-faint">Enter — переименовать</span>
+                )}
+              </div>
+
               <Section title="Выход">
                 <div className="flex flex-col gap-3.5">
                   <div className="flex items-center gap-3">

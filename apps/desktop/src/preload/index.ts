@@ -98,6 +98,12 @@ const api = {
   presets: {
     list: (): Promise<{ builtins: Preset[]; user: Preset[] }> => ipcRenderer.invoke("presets:list"),
     save: (preset: Preset): Promise<string> => ipcRenderer.invoke("presets:save", preset),
+    /** Переименовать пользовательский пресет (и его файл). */
+    rename: (
+      oldName: string,
+      newName: string,
+    ): Promise<{ ok: true; preset: Preset } | { ok: false; error: string }> =>
+      ipcRenderer.invoke("presets:rename", oldName, newName),
     /** Сохранить пресет в .json по выбору пользователя; null — отменено. */
     export: (preset: Preset): Promise<string | null> =>
       ipcRenderer.invoke("presets:export", preset),

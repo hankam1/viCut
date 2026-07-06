@@ -17,6 +17,7 @@ import {
   locateWhisper,
   modelPath,
   presetSchema,
+  renamePreset,
   probe,
   QueueStore,
   runQueue,
@@ -191,6 +192,34 @@ export function registerEngineIpc(): void {
     return { builtins, user };
   });
   ipcMain.handle("presets:save", async (_event, raw: unknown) => savePreset(presetSchema.parse(raw)));
+
+  ipcMain.handle("presets:rename", async (_event, oldName: string, rawNewName: string) => {
+    const newName = rawNewName.trim();
+    if (!newName) return { ok: false as const, error: "Имя не может быть пустым" };
+    // Имя — это ещё и имя файла <name>.json.
+    if (/[<>:"/\\|?*\u0000-\u001f]/.test(newName) || newName.endsWith(".")) {
+      return { ok: false as const, error: "В имени есть недопустимые символы" };
+    }
+    if (newName.length > 60) return { ok: false as const, error: "Слишком длинное имя" };
+    if (newName !== oldName) {
+      const taken = new Set(
+        [...builtinPresetNames(), ...(await listUserPresets())].map((n) => n.toLowerCase()),
+      );
+      taken.delete(oldName.toLowerCase());
+      if (taken.has(newName.toLowerCase())) {
+        return { ok: false as const, error: "Пресет с таким именем уже есть" };
+      }
+    }
+    try {
+      const preset = await renamePreset(oldName, newName);
+      return { ok: true as const, preset };
+    } catch (error) {
+      return {
+        ok: false as const,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+  });
 
   // Экспорт/импорт пресетов для обмена (обычный JSON-файл).
   ipcMain.handle("presets:export", async (event, raw: unknown) => {
