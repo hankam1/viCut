@@ -12,6 +12,7 @@ import { segmentsToSrt } from "../subtitles/srt.js";
 import { transcribeAudio } from "../transcribe/transcribe.js";
 import type { Transcript } from "../transcribe/types.js";
 import { selectEncoder } from "./encoders.js";
+import { prestitchClips } from "./prestitch.js";
 import {
   buildAudioDrivenGraph,
   buildGraph,
@@ -294,6 +295,26 @@ export async function encodeRender(
     );
 
     await fsp.mkdir(path.dirname(path.resolve(request.output)), { recursive: true });
+
+    // Секции клипов с переходами заранее сшиваются кусочками — xfade в общем
+    // графе тянет все клипы одновременно и копит гигабайты кадров в памяти.
+    if (spec.kind === "audio-driven") {
+      for (const [si, section] of prepared.sectionInfos.entries()) {
+        if (section.visuals.kind !== "clips" || section.visuals.infos.length < 2) continue;
+        const stitched = await prestitchClips({
+          section,
+          preset,
+          target: prepared.target,
+          tmpDir: prepared.tmpDir,
+          key: String(si),
+          ffmpegPath: options.tools.ffmpeg.path,
+          ffprobePath: options.tools.ffprobe.path,
+          encoderArgs: encoder.args,
+          onProgress: (detail) => emit("encode", 0, `секция ${si + 1} · ${detail}`),
+        });
+        if (stitched) section.visuals = { kind: "clips", infos: [stitched] };
+      }
+    }
 
     // Многосекционные задачи кодируются по секциям отдельными процессами:
     // один граф на весь фильм копит кадры неактивных веток concat без

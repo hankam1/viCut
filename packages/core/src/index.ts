@@ -80,6 +80,7 @@ export {
   type JobSpec,
   type SectionSpec,
 } from "./render/spec.js";
+export { prestitchClips, type PrestitchOptions } from "./render/prestitch.js";
 export {
   renderJob,
   prepareRender,

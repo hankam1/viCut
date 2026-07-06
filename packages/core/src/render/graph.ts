@@ -95,7 +95,7 @@ function loudnormFilter(preset: Preset, loudnorm: LoudnormMode): string[] {
  * Per-input video normalization: fit target frame, unify fps/timebase/format.
  * inputZoom > 1 crops the frame edges first (hides border watermarks).
  */
-function videoNormalizeChain(target: TargetSpec, inputZoom = 1): string {
+export function videoNormalizeChain(target: TargetSpec, inputZoom = 1): string {
   const crop =
     inputZoom > 1.001
       ? `crop=trunc(iw/${inputZoom.toFixed(3)}/2)*2:trunc(ih/${inputZoom.toFixed(3)}/2)*2,`
@@ -400,55 +400,29 @@ export async function buildAudioDrivenGraph(
 
     if (!audioOnly) {
       if (section.visuals.kind === "clips") {
+        // Переходы между клипами здесь НЕ делаются: xfade (framesync) тянет
+        // все входы одновременно и копит кадры поздних клипов в памяти без
+        // лимита. Секции с переходами заранее сшивает prestitchClips — сюда
+        // приходит уже один готовый файл.
         const infos = section.visuals.infos;
-        const durations: number[] = [];
+        const clipLabels: string[] = [];
         let clipsTotal = 0;
         for (const [ci, info] of infos.entries()) {
           inputArgs.push("-i", info.path);
           chains.push(
             `[${inputIndex}:v]${videoNormalizeChain(target, preset.effects.inputZoom)}[s${si}c${ci}]`,
           );
-          durations.push(info.durationSec!);
+          clipLabels.push(`[s${si}c${ci}]`);
           clipsTotal += info.durationSec!;
           inputIndex++;
         }
-
-        // Переход между клипами — xfade в исходном времени; длительность
-        // подобрана так, чтобы ПОСЛЕ спидфита переход длился как в пресете:
-        // tSrc = T·total/(audioDur+(n−1)·T). Каждый переход съедает tSrc из
-        // суммарного хронометража, отсюда пересчёт скорости.
-        const transition = preset.transition;
-        const n = infos.length;
-        let tSrc = 0;
-        if (transition.type !== "none" && n > 1) {
-          tSrc =
-            (transition.durationSec * clipsTotal) /
-            (audioDur + (n - 1) * transition.durationSec);
-          const minClip = Math.min(...durations);
-          tSrc = Math.min(tSrc, Math.max(0, (minClip - 0.25) * 0.9));
-          if (tSrc < 0.05) tSrc = 0;
-        }
-        const speed = (clipsTotal - (n - 1) * tSrc) / audioDur;
+        const speed = clipsTotal / audioDur;
         timings.push({ audioDurationSec: audioDur, speed, secondsPerImage: null });
 
         let merged = `s${si}c0`;
-        if (n > 1 && tSrc > 0) {
-          let accumulated = durations[0]!;
-          for (let ci = 1; ci < n; ci++) {
-            const offset = accumulated - tSrc;
-            const out = `s${si}x${ci}`;
-            chains.push(
-              `[${merged}][s${si}c${ci}]xfade=transition=${transition.type}` +
-                `:duration=${tSrc.toFixed(4)}:offset=${offset.toFixed(4)}[${out}]`,
-            );
-            merged = out;
-            accumulated = accumulated + durations[ci]! - tSrc;
-          }
-        } else if (n > 1) {
+        if (clipLabels.length > 1) {
           merged = `s${si}cat`;
-          chains.push(
-            `${infos.map((_, ci) => `[s${si}c${ci}]`).join("")}concat=n=${n}:v=1:a=0[${merged}]`,
-          );
+          chains.push(`${clipLabels.join("")}concat=n=${clipLabels.length}:v=1:a=0[${merged}]`);
         }
         chains.push(
           `[${merged}]setpts=PTS/${speed.toFixed(6)},fps=${target.fps},` +
