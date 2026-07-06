@@ -416,6 +416,16 @@ export function PresetsView() {
                       onChange={(position) => updateStyle({ position })}
                     />
                   </div>
+                  <Slider
+                    label="Обводка"
+                    value={current.subtitles.style.outlineWidth}
+                    min={0}
+                    max={8}
+                    step={0.5}
+                    neutral={3}
+                    format={(v) => (v === 0 ? "нет" : `${v.toFixed(1)} px`)}
+                    onChange={(outlineWidth) => updateStyle({ outlineWidth })}
+                  />
                   <div className="flex items-center gap-3">
                     <span className="w-28 shrink-0 text-[12px] text-muted">Анимация</span>
                     <Segmented
