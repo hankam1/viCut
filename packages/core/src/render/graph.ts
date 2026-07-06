@@ -320,9 +320,9 @@ function kenBurnsChain(
   phase: "main" | "shifted" = "main",
 ): string {
   const ss = preset.slideshow;
-  // Supersample just enough that the crop never upscales (factor ≥ max zoom):
-  // zoompan is single-threaded, extra pixels cost render speed directly.
-  const ssFactor = Math.min(2, Math.max(1.2, ss.zoom + 0.05));
+  // Суперсэмпл минимум ×2: сдвиг кропа zoompan квантуется в пикселях ВХОДА,
+  // и при малом запасе картинка заметно дрожит (проверено на реальном рендере).
+  const ssFactor = Math.min(2.5, Math.max(2, ss.zoom + 0.5));
   const ssW = Math.round((target.width * ssFactor) / 2) * 2;
   const ssH = Math.round((target.height * ssFactor) / 2) * 2;
   const fpi = (perImageSec * target.fps).toFixed(4);
@@ -337,7 +337,7 @@ function kenBurnsChain(
   const p = `clip(${speed}*(mod(in,${fpi})${offset})/${span},0,1)`;
   const zoomIn = `1+(${z}-1)*${p}`;
   const zoomOut = `${z}-(${z}-1)*${p}`;
-  // The shifted stream starts one image ahead (input -ss), so its local frame
+  // The shifted stream's list starts one image ahead, so its local frame
   // counter maps local image k to original image k+1 — parity is inverted.
   const [even, odd] = phase === "main" ? [zoomIn, zoomOut] : [zoomOut, zoomIn];
   const zoomExpr = `if(eq(mod(floor(in/${fpi}),2),0),${even},${odd})`;
@@ -393,24 +393,53 @@ export async function buildAudioDrivenGraph(
 
     if (!audioOnly) {
       if (section.visuals.kind === "clips") {
-        const clipLabels: string[] = [];
+        const infos = section.visuals.infos;
+        const durations: number[] = [];
         let clipsTotal = 0;
-        for (const [ci, info] of section.visuals.infos.entries()) {
+        for (const [ci, info] of infos.entries()) {
           inputArgs.push("-i", info.path);
           chains.push(`[${inputIndex}:v]${videoNormalizeChain(target)}[s${si}c${ci}]`);
-          clipLabels.push(`[s${si}c${ci}]`);
+          durations.push(info.durationSec!);
           clipsTotal += info.durationSec!;
           inputIndex++;
         }
-        const speed = clipsTotal / audioDur;
+
+        // Переход между клипами — xfade в исходном времени; длительность
+        // подобрана так, чтобы ПОСЛЕ спидфита переход длился как в пресете:
+        // tSrc = T·total/(audioDur+(n−1)·T). Каждый переход съедает tSrc из
+        // суммарного хронометража, отсюда пересчёт скорости.
+        const transition = preset.transition;
+        const n = infos.length;
+        let tSrc = 0;
+        if (transition.type !== "none" && n > 1) {
+          tSrc =
+            (transition.durationSec * clipsTotal) /
+            (audioDur + (n - 1) * transition.durationSec);
+          const minClip = Math.min(...durations);
+          tSrc = Math.min(tSrc, Math.max(0, (minClip - 0.25) * 0.9));
+          if (tSrc < 0.05) tSrc = 0;
+        }
+        const speed = (clipsTotal - (n - 1) * tSrc) / audioDur;
         timings.push({ audioDurationSec: audioDur, speed, secondsPerImage: null });
 
-        let merged: string;
-        if (clipLabels.length > 1) {
+        let merged = `s${si}c0`;
+        if (n > 1 && tSrc > 0) {
+          let accumulated = durations[0]!;
+          for (let ci = 1; ci < n; ci++) {
+            const offset = accumulated - tSrc;
+            const out = `s${si}x${ci}`;
+            chains.push(
+              `[${merged}][s${si}c${ci}]xfade=transition=${transition.type}` +
+                `:duration=${tSrc.toFixed(4)}:offset=${offset.toFixed(4)}[${out}]`,
+            );
+            merged = out;
+            accumulated = accumulated + durations[ci]! - tSrc;
+          }
+        } else if (n > 1) {
           merged = `s${si}cat`;
-          chains.push(`${clipLabels.join("")}concat=n=${clipLabels.length}:v=1:a=0[${merged}]`);
-        } else {
-          merged = `s${si}c0`;
+          chains.push(
+            `${infos.map((_, ci) => `[s${si}c${ci}]`).join("")}concat=n=${n}:v=1:a=0[${merged}]`,
+          );
         }
         chains.push(
           `[${merged}]setpts=PTS/${speed.toFixed(6)},fps=${target.fps},` +
@@ -450,13 +479,18 @@ export async function buildAudioDrivenGraph(
           // Кроссфейд без цепочки xfade (не влезла бы в лимит аргументов при
           // 100+ картинках): то же слайдшоу вторым потоком, начатым на одну
           // картинку вперёд, подмешивается поверх основного периодической
-          // альфа-маской в последние fade секунд каждой картинки. Сдвиг —
-          // через -ss на входе: trim=start декодировал бы (и зумировал) всю
-          // первую картинку впустую, а основной поток копился бы у overlay.
-          inputArgs.push(
-            "-ss", (perImage + 0.001).toFixed(4),
-            "-f", "concat", "-safe", "0", "-i", listPath,
-          );
+          // альфа-маской в последние fade секунд каждой картинки. Сдвиг — свой
+          // список без первой картинки: старт ровно на кадровой сетке, без
+          // seek (и без trim=start, который декодировал бы картинку впустую).
+          const linesB = ["ffconcat version 1.0"];
+          for (const info of section.visuals.infos.slice(1)) {
+            linesB.push(`file ${concatListPath(info.path)}`);
+            linesB.push(`duration ${perImage.toFixed(4)}`);
+          }
+          linesB.push(`file ${concatListPath(section.visuals.infos.at(-1)!.path)}`);
+          const listPathB = path.join(tmpDir, `section-${si}-images-b.txt`);
+          await fsp.writeFile(listPathB, `${linesB.join("\n")}\n`, "utf8");
+          inputArgs.push("-f", "concat", "-safe", "0", "-i", listPathB);
           const a = inputIndex;
           const b = inputIndex + 1;
           inputIndex += 2;

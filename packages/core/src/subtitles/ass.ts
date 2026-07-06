@@ -116,13 +116,30 @@ function animatedEvents(segment: TranscriptSegment, style: SubtitleStyle): AssEv
     const endSec = active < words.length - 1 ? starts[active + 1]! : segment.endSec;
     if (endSec - startSec < 0.001) continue; // word pops in together with the next one
 
+    // Активное слово появляется мягко: \t-анимация прозрачности (появление)
+    // или цвета (подсветка) ~120 мс; {\r} сбрасывает теги после слова.
+    const fadeMs = Math.round(Math.min(150, (endSec - startSec) * 800));
+    const animate = fadeMs >= 20;
+    let openTag = "";
+    if (reveal && animate) {
+      const color = highlight ? `\\1c${assColorTag(style.highlightColor)}` : "";
+      openTag =
+        `{${color}\\1a&HFF&\\3a&HFF&\\4a&HFF&` +
+        `\\t(0,${fadeMs},\\1a&H00&\\3a&H00&\\4a&H00&)}`;
+    } else if (highlight && animate) {
+      openTag = `{\\t(0,${fadeMs},\\1c${assColorTag(style.highlightColor)})}`;
+    } else if (highlight) {
+      openTag = highlightOn;
+    }
+    const closeTag = openTag ? (animate ? "{\\r}" : highlightOff) : "";
+
     const rendered = lines
       .map((line) => {
         const visible = reveal ? line.filter((index) => index <= active) : line;
         return visible
           .map((index) =>
-            highlight && index === active
-              ? `${highlightOn}${words[index]!.text}${highlightOff}`
+            index === active && openTag
+              ? `${openTag}${words[index]!.text}${closeTag}`
               : words[index]!.text,
           )
           .join(" ");
