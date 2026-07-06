@@ -100,6 +100,8 @@ export const slideshowSchema = z.object({
   zoom: z.number().min(1.02).max(2).default(1.15),
   /** Zoom pace: 1 reaches max zoom exactly as the image ends; higher is faster, then holds. */
   speed: z.number().min(0.25).max(4).default(1),
+  /** Crossfade between neighboring images, seconds; 0 = hard cuts. */
+  crossfadeSec: z.number().min(0).max(2).default(0.5),
 });
 
 export const effectsSchema = z.object({

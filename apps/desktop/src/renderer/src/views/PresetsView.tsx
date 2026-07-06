@@ -504,10 +504,22 @@ export function PresetsView() {
                     format={(v) => `×${v.toFixed(2)}`}
                     onChange={(speed) => update({ slideshow: { ...current.slideshow, speed } })}
                   />
+                  <Slider
+                    label="Переход"
+                    value={current.slideshow.crossfadeSec}
+                    min={0}
+                    max={1.5}
+                    step={0.1}
+                    neutral={0.5}
+                    format={(v) => (v === 0 ? "выкл" : `${v.toFixed(1)}с`)}
+                    onChange={(crossfadeSec) =>
+                      update({ slideshow: { ...current.slideshow, crossfadeSec } })
+                    }
+                  />
                   <div className="pl-[124px] text-[11.5px] text-faint">
                     Медленный зум на картинках в режиме «Сборка под аудио»: чётные картинки
-                    приближаются, нечётные — отдаляются. Скорость ×1 — зум доходит до максимума
-                    ровно к смене картинки.
+                    приближаются, нечётные — отдаляются. Переход — плавное растворение между
+                    соседними картинками.
                   </div>
                 </div>
               </Section>

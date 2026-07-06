@@ -298,17 +298,34 @@ function concatListPath(filePath: string): string {
  * restarts on every image boundary (frames-per-image is constant within a
  * section), alternating zoom-in / zoom-out per image. The stream is
  * supersampled ×2 beforehand so the crop never upscales.
+ *
+ * With a crossfade, an image is visible for fade+perImage seconds (it fades in
+ * during the previous image's tail), so the zoom spans that window. The
+ * "shifted" phase generates the same images as the crossfade overlay stream
+ * (which is trimmed one image ahead): its zoom starts at the fade start and
+ * lands exactly on the "main" stream's phase at the cut, so the zoom is
+ * continuous across the transition.
  */
-function kenBurnsChain(target: TargetSpec, perImageSec: number, preset: Preset): string {
+function kenBurnsChain(
+  target: TargetSpec,
+  perImageSec: number,
+  preset: Preset,
+  fadeSec = 0,
+  phase: "main" | "shifted" = "main",
+): string {
   const ss = preset.slideshow;
   const ssW = target.width * 2;
   const ssH = target.height * 2;
   const fpi = (perImageSec * target.fps).toFixed(4);
+  const ff = (fadeSec * target.fps).toFixed(4);
+  const span = ((perImageSec + fadeSec) * target.fps).toFixed(4);
   const z = ss.zoom.toFixed(3);
+  const speed = ss.speed.toFixed(3);
   // Commas are safe: the whole expression is single-quoted for the graph
   // parser. zoompan's frame counter is `in` (not the usual `n`).
-  // Progress within the current image, 0..1, scaled by speed and capped.
-  const p = `min(1,${ss.speed.toFixed(3)}*mod(in,${fpi})/${fpi})`;
+  // Progress of the current image's zoom, 0..1, scaled by speed and capped.
+  const offset = phase === "main" ? `+${ff}` : `-(${fpi}-${ff})`;
+  const p = `clip(${speed}*(mod(in,${fpi})${offset})/${span},0,1)`;
   const zoomExpr =
     `if(eq(mod(floor(in/${fpi}),2),0),` +
     `1+(${z}-1)*${p},` +
@@ -403,15 +420,52 @@ export async function buildAudioDrivenGraph(
         const listPath = path.join(tmpDir, `section-${si}-images.txt`);
         await fsp.writeFile(listPath, `${lines.join("\n")}\n`, "utf8");
 
+        // Кроссфейд не длиннее ~половины показа картинки; совсем короткий не имеет смысла.
+        const fade = Math.min(preset.slideshow.crossfadeSec, 0.45 * perImage);
+        const useCrossfade = section.visuals.infos.length > 1 && fade >= 0.05;
+        const chainFor = (phase: "main" | "shifted"): string =>
+          preset.slideshow.kenBurns
+            ? kenBurnsChain(target, perImage, preset, useCrossfade ? fade : 0, phase)
+            : videoNormalizeChain(target);
+
         inputArgs.push("-f", "concat", "-safe", "0", "-i", listPath);
-        const imageChain = preset.slideshow.kenBurns
-          ? kenBurnsChain(target, perImage, preset)
-          : videoNormalizeChain(target);
-        chains.push(
-          `[${inputIndex}:v]${imageChain},` +
-            `trim=duration=${audioDur.toFixed(3)},setpts=PTS-STARTPTS[v${si}]`,
-        );
-        inputIndex++;
+        if (!useCrossfade) {
+          chains.push(
+            `[${inputIndex}:v]${chainFor("main")},` +
+              `trim=duration=${audioDur.toFixed(3)},setpts=PTS-STARTPTS[v${si}]`,
+          );
+          inputIndex++;
+        } else {
+          // Кроссфейд без цепочки xfade (не влезла бы в лимит аргументов при
+          // 100+ картинках): то же слайдшоу вторым потоком, обрезанным на одну
+          // картинку вперёд, подмешивается поверх основного периодической
+          // альфа-маской в последние fade секунд каждой картинки.
+          inputArgs.push("-f", "concat", "-safe", "0", "-i", listPath);
+          const a = inputIndex;
+          const b = inputIndex + 1;
+          inputIndex += 2;
+          const nextDur = audioDur - perImage;
+          chains.push(
+            `[${a}:v]${chainFor("main")},` +
+              `trim=duration=${audioDur.toFixed(3)},setpts=PTS-STARTPTS[s${si}base]`,
+          );
+          chains.push(
+            `[${b}:v]${chainFor("shifted")},` +
+              `trim=start=${perImage.toFixed(4)}:duration=${nextDur.toFixed(4)},setpts=PTS-STARTPTS[s${si}next]`,
+          );
+          // Альфа одинакова по всему кадру — считается на 2×2 (geq дёшев) и
+          // растягивается до целевого размера.
+          chains.push(
+            `color=c=white:s=2x2:r=${target.fps}:d=${nextDur.toFixed(4)},format=gray,` +
+              `geq=lum='255*clip((mod(T,${perImage.toFixed(4)})-${(perImage - fade).toFixed(4)})/${fade.toFixed(4)},0,1)',` +
+              `scale=${target.width}:${target.height}:flags=neighbor,settb=AVTB[s${si}mask]`,
+          );
+          chains.push(`[s${si}next][s${si}mask]alphamerge[s${si}over]`);
+          chains.push(
+            `[s${si}base][s${si}over]overlay=eof_action=pass:format=auto,` +
+              `format=yuv420p,setsar=1[v${si}]`,
+          );
+        }
       }
     } else {
       timings.push({
