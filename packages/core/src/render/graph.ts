@@ -275,6 +275,12 @@ export interface BuildAudioDrivenGraphOptions {
   preset: Preset;
   /** Directory for generated slideshow list files (concat demuxer). */
   tmpDir: string;
+  /**
+   * Output resolution/fps. Defaults to computeTargetSpec of the first visual;
+   * pass explicitly when sections are rendered as separate ffmpeg runs so all
+   * parts share one format (required for lossless concat).
+   */
+  target?: TargetSpec;
   audioOnly?: boolean;
   assPath?: string | null;
   loudnorm?: LoudnormMode;
@@ -289,7 +295,7 @@ export interface SectionTiming {
 }
 
 /** Path line for the concat demuxer list file (single quotes, ' → '\''). */
-function concatListPath(filePath: string): string {
+export function concatListPath(filePath: string): string {
   return `'${filePath.replace(/\\/g, "/").replace(/'/g, "'\\''")}'`;
 }
 
@@ -326,10 +332,12 @@ function kenBurnsChain(
   // Progress of the current image's zoom, 0..1, scaled by speed and capped.
   const offset = phase === "main" ? `+${ff}` : `-(${fpi}-${ff})`;
   const p = `clip(${speed}*(mod(in,${fpi})${offset})/${span},0,1)`;
-  const zoomExpr =
-    `if(eq(mod(floor(in/${fpi}),2),0),` +
-    `1+(${z}-1)*${p},` +
-    `${z}-(${z}-1)*${p})`;
+  const zoomIn = `1+(${z}-1)*${p}`;
+  const zoomOut = `${z}-(${z}-1)*${p}`;
+  // The shifted stream starts one image ahead (input -ss), so its local frame
+  // counter maps local image k to original image k+1 — parity is inverted.
+  const [even, odd] = phase === "main" ? [zoomIn, zoomOut] : [zoomOut, zoomIn];
+  const zoomExpr = `if(eq(mod(floor(in/${fpi}),2),0),${even},${odd})`;
   return (
     `scale=${ssW}:${ssH}:force_original_aspect_ratio=decrease,` +
     `pad=${ssW}:${ssH}:(ow-iw)/2:(oh-ih)/2:color=black,fps=${target.fps},` +
@@ -370,7 +378,7 @@ export async function buildAudioDrivenGraph(
   }
 
   const firstVisual = sections[0]!.visuals.infos[0]!;
-  const target = computeTargetSpec([firstVisual], preset);
+  const target = options.target ?? computeTargetSpec([firstVisual], preset);
 
   const chains: string[] = [];
   const inputArgs: string[] = [];
@@ -437,10 +445,15 @@ export async function buildAudioDrivenGraph(
           inputIndex++;
         } else {
           // Кроссфейд без цепочки xfade (не влезла бы в лимит аргументов при
-          // 100+ картинках): то же слайдшоу вторым потоком, обрезанным на одну
+          // 100+ картинках): то же слайдшоу вторым потоком, начатым на одну
           // картинку вперёд, подмешивается поверх основного периодической
-          // альфа-маской в последние fade секунд каждой картинки.
-          inputArgs.push("-f", "concat", "-safe", "0", "-i", listPath);
+          // альфа-маской в последние fade секунд каждой картинки. Сдвиг —
+          // через -ss на входе: trim=start декодировал бы (и зумировал) всю
+          // первую картинку впустую, а основной поток копился бы у overlay.
+          inputArgs.push(
+            "-ss", (perImage + 0.001).toFixed(4),
+            "-f", "concat", "-safe", "0", "-i", listPath,
+          );
           const a = inputIndex;
           const b = inputIndex + 1;
           inputIndex += 2;
@@ -451,7 +464,7 @@ export async function buildAudioDrivenGraph(
           );
           chains.push(
             `[${b}:v]${chainFor("shifted")},` +
-              `trim=start=${perImage.toFixed(4)}:duration=${nextDur.toFixed(4)},setpts=PTS-STARTPTS[s${si}next]`,
+              `trim=duration=${nextDur.toFixed(4)},setpts=PTS-STARTPTS[s${si}next]`,
           );
           // Альфа одинакова по всему кадру — считается на 2×2 (geq дёшев) и
           // растягивается до целевого размера.

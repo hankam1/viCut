@@ -16,12 +16,15 @@ import {
   buildAudioDrivenGraph,
   buildGraph,
   computeTargetSpec,
+  concatListPath,
   RenderError,
   type BuiltGraph,
   type LoudnormMeasured,
   type LoudnormMode,
   type ProbedSection,
+  type TargetSpec,
 } from "./graph.js";
+import type { TranscriptSegment } from "../transcribe/types.js";
 import type { JobSpec } from "./spec.js";
 
 export type RenderStage = "probe" | "prepare-audio" | "transcribe" | "subtitles" | "encode";
@@ -91,6 +94,11 @@ export interface PreparedRender {
   assPath: string | null;
   srtPath: string | null;
   transcript: Transcript | null;
+  /** Probed sections (audio-driven jobs; empty for stitch). */
+  sectionInfos: ProbedSection[];
+  /** Output resolution/fps, shared by every encode of this job. */
+  target: TargetSpec;
+  tmpDir: string;
   makeGraph: (opts: {
     audioOnly?: boolean;
     assPath?: string | null;
@@ -98,6 +106,32 @@ export interface PreparedRender {
   }) => Promise<BuiltGraph>;
   /** Remove the temp files; encodeRender does this itself. */
   cleanup: () => Promise<void>;
+}
+
+/** Сегменты, попадающие в окно секции, со сдвигом в её локальное время. */
+function sliceTranscript(
+  segments: TranscriptSegment[],
+  startSec: number,
+  endSec: number,
+): TranscriptSegment[] {
+  const out: TranscriptSegment[] = [];
+  for (const segment of segments) {
+    if (segment.endSec <= startSec || segment.startSec >= endSec) continue;
+    const words = segment.words
+      ?.filter((word) => word.endSec > startSec && word.startSec < endSec)
+      .map((word) => ({
+        ...word,
+        startSec: Math.max(0, word.startSec - startSec),
+        endSec: Math.min(endSec - startSec, word.endSec - startSec),
+      }));
+    out.push({
+      ...segment,
+      startSec: Math.max(0, segment.startSec - startSec),
+      endSec: Math.min(endSec - startSec, segment.endSec - startSec),
+      ...(words && words.length > 0 ? { words } : {}),
+    });
+  }
+  return out;
 }
 
 /**
@@ -136,6 +170,10 @@ export async function prepareRender(
       }
     }
 
+    const reference =
+      spec.kind === "stitch" ? stitchInfos : [sectionInfos[0]!.visuals.infos[0]!];
+    const target = computeTargetSpec(reference, preset);
+
     const makeGraph = async (opts: {
       audioOnly?: boolean;
       assPath?: string | null;
@@ -143,7 +181,8 @@ export async function prepareRender(
     }): Promise<BuiltGraph> =>
       spec.kind === "stitch"
         ? buildGraph({ inputs: stitchInfos, preset, ...opts })
-        : (await buildAudioDrivenGraph({ sections: sectionInfos, preset, tmpDir, ...opts })).graph;
+        : (await buildAudioDrivenGraph({ sections: sectionInfos, preset, tmpDir, target, ...opts }))
+            .graph;
 
     // ── Аудио-препасс: замер громкости + WAV для транскрипции за один проход ──
     const subsEnabled = preset.subtitles.enabled;
@@ -199,11 +238,6 @@ export async function prepareRender(
           await fsp.writeFile(srtPath, segmentsToSrt(transcript.segments), "utf8");
         }
         if (preset.subtitles.burnIn) {
-          const reference =
-            spec.kind === "stitch"
-              ? stitchInfos
-              : [sectionInfos[0]!.visuals.infos[0]!];
-          const target = computeTargetSpec(reference, preset);
           assPath = path.join(tmpDir, "subtitles.ass");
           await fsp.writeFile(
             assPath,
@@ -217,7 +251,18 @@ export async function prepareRender(
       }
     }
 
-    return { request, measured, assPath, srtPath, transcript, makeGraph, cleanup };
+    return {
+      request,
+      measured,
+      assPath,
+      srtPath,
+      transcript,
+      sectionInfos,
+      target,
+      tmpDir,
+      makeGraph,
+      cleanup,
+    };
   } catch (error) {
     await cleanup();
     throw error;
@@ -230,7 +275,7 @@ export async function encodeRender(
   options: RenderOptions,
 ): Promise<RenderResult> {
   const { request, measured, assPath, srtPath, transcript } = prepared;
-  const { preset } = request;
+  const { preset, spec } = request;
   const emit = (stage: RenderStage, percent: number | null, detail?: string): void =>
     options.onProgress?.({ stage, percent, detail });
 
@@ -242,13 +287,22 @@ export async function encodeRender(
       preset.output.quality,
     );
 
+    await fsp.mkdir(path.dirname(path.resolve(request.output)), { recursive: true });
+
+    // Многосекционные задачи кодируются по секциям отдельными процессами:
+    // один граф на весь фильм копит кадры неактивных веток concat без
+    // ограничения (ffmpeg подтягивает все входы по наименьшему таймстемпу) —
+    // на часовом видео это гигабайты. Куски склеиваются без перекодирования.
+    if (spec.kind === "audio-driven" && prepared.sectionInfos.length > 1) {
+      return await encodeSections(prepared, options, encoder.name, encoder.args, emit);
+    }
+
     emit("encode", 0, encoder.name);
     const graph = await prepared.makeGraph({
       assPath,
       loudnorm: measured ? { mode: "apply", measured } : null,
     });
 
-    await fsp.mkdir(path.dirname(path.resolve(request.output)), { recursive: true });
     const args = [
       "-y",
       ...graph.inputArgs,
@@ -277,6 +331,98 @@ export async function encodeRender(
   } finally {
     await prepared.cleanup();
   }
+}
+
+/** Посекционное кодирование + склейка кусков copy-ремуксом. */
+async function encodeSections(
+  prepared: PreparedRender,
+  options: RenderOptions,
+  encoderName: string,
+  encoderArgs: string[],
+  emit: (stage: RenderStage, percent: number | null, detail?: string) => void,
+): Promise<RenderResult> {
+  const { request, measured, transcript, sectionInfos, target, tmpDir } = prepared;
+  const { preset } = request;
+  const totalDur = sectionInfos.reduce((sum, s) => sum + s.audio.durationSec!, 0);
+  const style = preset.subtitles.style;
+
+  emit("encode", 0, encoderName);
+  const parts: string[] = [];
+  let doneDur = 0;
+  for (const [si, section] of sectionInfos.entries()) {
+    const secDur = section.audio.durationSec!;
+
+    // Субтитры секции: вырезка из общего транскрипта в локальном времени.
+    let assPath: string | null = null;
+    if (prepared.assPath && transcript) {
+      const slice = sliceTranscript(transcript.segments, doneDur, doneDur + secDur);
+      if (slice.length > 0) {
+        assPath = path.join(tmpDir, `subtitles-${si}.ass`);
+        await fsp.writeFile(
+          assPath,
+          segmentsToAss(slice, style, { playResX: target.width, playResY: target.height }),
+          "utf8",
+        );
+      }
+    }
+
+    const { graph } = await buildAudioDrivenGraph({
+      sections: [section],
+      preset,
+      tmpDir,
+      target,
+      assPath,
+      loudnorm: measured ? { mode: "apply", measured } : null,
+    });
+
+    const partPath = path.join(tmpDir, `part-${si}.mp4`);
+    const args = [
+      "-y",
+      ...graph.inputArgs,
+      "-filter_complex", graph.filterComplex,
+      "-map", graph.videoLabel!,
+      "-map", graph.audioLabel,
+      ...encoderArgs,
+      "-c:a", "aac",
+      "-b:a", `${preset.output.audioBitrateKbps}k`,
+      partPath,
+    ];
+    const base = doneDur;
+    await runFfmpeg(options.tools.ffmpeg.path, args, {
+      totalDurationSec: graph.totalDurationSec,
+      onProgress: (p) =>
+        emit(
+          "encode",
+          ((base + ((p.percent ?? 0) / 100) * secDur) / totalDur) * 99,
+          `${encoderName} · секция ${si + 1}/${sectionInfos.length}` +
+            (p.speed ? ` · ${p.speed.toFixed(1)}x` : ""),
+        ),
+    });
+    parts.push(partPath);
+    doneDur += secDur;
+  }
+
+  // Куски закодированы одинаково — финальная склейка без перекодирования.
+  emit("encode", 99, "склейка");
+  const listPath = path.join(tmpDir, "parts.txt");
+  await fsp.writeFile(
+    listPath,
+    `${parts.map((part) => `file ${concatListPath(part)}`).join("\n")}\n`,
+    "utf8",
+  );
+  await runFfmpeg(
+    options.tools.ffmpeg.path,
+    ["-y", "-f", "concat", "-safe", "0", "-i", listPath, "-c", "copy", "-movflags", "+faststart", request.output],
+    { totalDurationSec: totalDur, onProgress: () => emit("encode", 99.5, "склейка") },
+  );
+
+  return {
+    output: request.output,
+    durationSec: totalDur,
+    encoder: encoderName,
+    srtPath: prepared.srtPath,
+    language: transcript?.language ?? null,
+  };
 }
 
 /**
