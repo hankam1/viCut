@@ -308,7 +308,7 @@ export function concatListPath(filePath: string): string {
  * With a crossfade, an image is visible for fade+perImage seconds (it fades in
  * during the previous image's tail), so the zoom spans that window. The
  * "shifted" phase generates the same images as the crossfade overlay stream
- * (which is trimmed one image ahead): its zoom starts at the fade start and
+ * (which starts one image ahead): its zoom starts at the fade start and
  * lands exactly on the "main" stream's phase at the cut, so the zoom is
  * continuous across the transition.
  */
@@ -320,8 +320,11 @@ function kenBurnsChain(
   phase: "main" | "shifted" = "main",
 ): string {
   const ss = preset.slideshow;
-  const ssW = target.width * 2;
-  const ssH = target.height * 2;
+  // Supersample just enough that the crop never upscales (factor ≥ max zoom):
+  // zoompan is single-threaded, extra pixels cost render speed directly.
+  const ssFactor = Math.min(2, Math.max(1.2, ss.zoom + 0.05));
+  const ssW = Math.round((target.width * ssFactor) / 2) * 2;
+  const ssH = Math.round((target.height * ssFactor) / 2) * 2;
   const fpi = (perImageSec * target.fps).toFixed(4);
   const ff = (fadeSec * target.fps).toFixed(4);
   const span = ((perImageSec + fadeSec) * target.fps).toFixed(4);
