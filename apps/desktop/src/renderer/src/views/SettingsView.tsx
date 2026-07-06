@@ -259,8 +259,8 @@ export function SettingsView() {
               )}
             </div>
             <div className="pl-[124px] text-[11.5px] text-faint">
-              Обновления берутся из GitHub Releases. На Windows установщик скачивается и
-              запускается сам, на macOS откроется страница загрузки.
+              Обновления берутся из GitHub Releases. На Windows обновление ставится тихо и
+              приложение перезапускается само, на macOS откроется страница загрузки.
             </div>
           </div>
         </Section>

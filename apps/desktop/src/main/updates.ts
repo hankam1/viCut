@@ -122,10 +122,17 @@ async function download(): Promise<UpdateState> {
   }
 }
 
-/** Запустить установщик и выйти; без установщика — открыть страницу релиза. */
+/**
+ * Тихо обновиться и выйти; без установщика — открыть страницу релиза.
+ * /S — NSIS ставит в прежнюю папку без окон, --updated помечает запуск как
+ * обновление, --force-run перезапускает приложение после установки.
+ */
 function install(): void {
   if (installerPath) {
-    spawn(installerPath, [], { detached: true, stdio: "ignore" }).unref();
+    spawn(installerPath, ["/S", "--updated", "--force-run"], {
+      detached: true,
+      stdio: "ignore",
+    }).unref();
     app.quit();
   } else {
     void shell.openExternal(latest?.pageUrl ?? RELEASES_PAGE);
