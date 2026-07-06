@@ -132,6 +132,8 @@ const api = {
       ipcRenderer.invoke("media:classify", paths),
   },
   dialog: {
+    /** Любые медиафайлы (видео/аудио/картинки) — для добавления в очередь. */
+    pickMedia: (): Promise<string[]> => ipcRenderer.invoke("dialog:pick-media"),
     pickVideos: (): Promise<string[]> => ipcRenderer.invoke("dialog:pick-videos"),
     pickAudio: (): Promise<string | null> => ipcRenderer.invoke("dialog:pick-audio"),
     pickVisuals: (): Promise<string[]> => ipcRenderer.invoke("dialog:pick-visuals"),

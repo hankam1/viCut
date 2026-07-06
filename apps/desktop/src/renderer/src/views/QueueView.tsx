@@ -35,7 +35,7 @@ export function QueueView() {
   );
 
   const pickFiles = useCallback(() => {
-    void window.vicut.dialog.pickVideos().then(addInputs);
+    void window.vicut.dialog.pickMedia().then(addInputs);
   }, [addInputs]);
 
   const onDrop = useCallback(

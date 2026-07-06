@@ -298,6 +298,22 @@ export function registerEngineIpc(): void {
   ipcMain.handle("media:classify", (_event, paths: string[]) => classifyMedia(paths));
 
   // ── Диалоги и shell ──
+  const exts = (set: Set<string>): string[] => [...set].map((ext) => ext.slice(1));
+  ipcMain.handle("dialog:pick-media", async (event) => {
+    const win = BrowserWindow.fromWebContents(event.sender);
+    if (!win) return [];
+    const result = await dialog.showOpenDialog(win, {
+      properties: ["openFile", "multiSelections"],
+      filters: [
+        { name: "Медиа (видео, аудио, картинки)", extensions: [...exts(VIDEO_EXT), ...exts(AUDIO_EXT), ...exts(IMAGE_EXT)] },
+        { name: "Видео", extensions: exts(VIDEO_EXT) },
+        { name: "Аудио", extensions: exts(AUDIO_EXT) },
+        { name: "Картинки", extensions: exts(IMAGE_EXT) },
+        { name: "Все файлы", extensions: ["*"] },
+      ],
+    });
+    return result.canceled ? [] : result.filePaths;
+  });
   ipcMain.handle("dialog:pick-videos", async (event) => {
     const win = BrowserWindow.fromWebContents(event.sender);
     if (!win) return [];
