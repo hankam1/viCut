@@ -50,6 +50,18 @@ function uniqueName(base: string, taken: Set<string>): string {
   return candidate;
 }
 
+/** Подзаголовок внутри секции — визуально группирует связанные настройки. */
+function SubGroup({ label }: { label: string }) {
+  return (
+    <div className="mt-1.5 flex items-center gap-2.5 first:mt-0">
+      <span className="text-[10.5px] font-semibold uppercase tracking-[0.09em] text-faint">
+        {label}
+      </span>
+      <div className="h-px flex-1 bg-border" />
+    </div>
+  );
+}
+
 export function PresetsView() {
   const toast = useToast();
   const [builtins, setBuiltins] = useState<Preset[]>([]);
@@ -262,7 +274,10 @@ export function PresetsView() {
 
               <Section title="Выход">
                 <div className="flex flex-col gap-3.5">
-                  <div className="flex items-center gap-3">
+                  <div
+                    className="flex items-center gap-3"
+                    title="Степень сжатия видео: «Высокое» — неотличимо от исходника (для YouTube), каждый шаг ниже — файл примерно вдвое меньше, но хуже картинка."
+                  >
                     <span className="w-28 shrink-0 text-[12px] text-muted">Качество</span>
                     <Segmented
                       options={[
@@ -315,7 +330,11 @@ export function PresetsView() {
                 }
               >
                 <div className="flex flex-col gap-3.5">
-                  <div className="flex items-center gap-3">
+                  <SubGroup label="Распознавание речи" />
+                  <div
+                    className="flex items-center gap-3"
+                    title="Чем распознавать речь: локальный Whisper (бесплатно, на видеокарте) или облако — Groq/OpenAI (нужен API-ключ в настройках). «Авто» выбирает облако, если ключ задан."
+                  >
                     <span className="w-28 shrink-0 text-[12px] text-muted">Распознавание</span>
                     <Segmented
                       options={[
@@ -330,7 +349,10 @@ export function PresetsView() {
                       }
                     />
                   </div>
-                  <div className="flex items-center gap-3">
+                  <div
+                    className="flex items-center gap-3"
+                    title="Язык речи в видео. «Автоопределение» — Whisper определит сам."
+                  >
                     <span className="w-28 shrink-0 text-[12px] text-muted">Язык</span>
                     <select
                       value={current.subtitles.language}
@@ -348,7 +370,11 @@ export function PresetsView() {
                       ))}
                     </select>
                   </div>
-                  <div className="flex items-center gap-3">
+                  <SubGroup label="Текст" />
+                  <div
+                    className="flex items-center gap-3"
+                    title="Шрифт — любой из установленных в системе. «Заглавными» — весь текст капсом, как в CapCut."
+                  >
                     <span className="w-28 shrink-0 text-[12px] text-muted">Шрифт</span>
                     <FontSelect
                       value={current.subtitles.style.fontFamily}
@@ -371,20 +397,28 @@ export function PresetsView() {
                       Заглавными
                     </label>
                   </div>
-                  <Slider
-                    label="Размер"
-                    value={current.subtitles.style.fontSize}
-                    min={24}
-                    max={96}
-                    step={2}
-                    neutral={48}
-                    onChange={(fontSize) => updateStyle({ fontSize })}
-                  />
-                  <div className="flex items-start gap-3">
+                  <div title="Размер текста в масштабе 1080p — на другом разрешении масштабируется пропорционально.">
+                    <Slider
+                      label="Размер"
+                      value={current.subtitles.style.fontSize}
+                      min={24}
+                      max={96}
+                      step={2}
+                      neutral={48}
+                      onChange={(fontSize) => updateStyle({ fontSize })}
+                    />
+                  </div>
+                  <div
+                    className="flex items-start gap-3"
+                    title="Готовые наборы: цвет, обводка, капс и анимация применяются одним кликом. Дальше можно докрутить вручную."
+                  >
                     <span className="w-28 shrink-0 pt-1.5 text-[12px] text-muted">Стиль текста</span>
                     <TextStylePresets style={current.subtitles.style} onApply={updateStyle} />
                   </div>
-                  <div className="flex items-center gap-3">
+                  <div
+                    className="flex items-center gap-3"
+                    title="Первый цвет — сам текст, второй — обводка вокруг букв. Позиция — где текст стоит в кадре."
+                  >
                     <span className="w-28 shrink-0 text-[12px] text-muted">Цвет / обводка</span>
                     <input
                       type="color"
@@ -416,17 +450,23 @@ export function PresetsView() {
                       onChange={(position) => updateStyle({ position })}
                     />
                   </div>
-                  <Slider
-                    label="Обводка"
-                    value={current.subtitles.style.outlineWidth}
-                    min={0}
-                    max={8}
-                    step={0.5}
-                    neutral={3}
-                    format={(v) => (v === 0 ? "нет" : `${v.toFixed(1)} px`)}
-                    onChange={(outlineWidth) => updateStyle({ outlineWidth })}
-                  />
-                  <div className="flex items-center gap-3">
+                  <div title="Толщина контура вокруг букв (в масштабе 1080p). 0 — без обводки.">
+                    <Slider
+                      label="Обводка"
+                      value={current.subtitles.style.outlineWidth}
+                      min={0}
+                      max={8}
+                      step={0.5}
+                      neutral={3}
+                      format={(v) => (v === 0 ? "нет" : `${v.toFixed(1)} px`)}
+                      onChange={(outlineWidth) => updateStyle({ outlineWidth })}
+                    />
+                  </div>
+                  <SubGroup label="Анимация" />
+                  <div
+                    className="flex items-center gap-3"
+                    title="Слова синхронизируются с речью: «Появление» — возникают по мере произнесения, «Подсветка» — активное слово выделяется цветом, «Оба» — как в CapCut."
+                  >
                     <span className="w-28 shrink-0 text-[12px] text-muted">Анимация</span>
                     <Segmented
                       options={[
@@ -459,8 +499,12 @@ export function PresetsView() {
                     выделяется цветом.
                   </div>
                   <SubtitlePreview style={current.subtitles.style} />
+                  <SubGroup label="Вывод" />
                   <div className="flex items-center gap-6">
-                    <label className="flex items-center gap-2 text-[12px] text-muted">
+                    <label
+                      className="flex items-center gap-2 text-[12px] text-muted"
+                      title="Субтитры впечатываются в картинку навсегда — видны в любом плеере и в этом стиле."
+                    >
                       <Toggle
                         label="Вшить в видео"
                         checked={current.subtitles.burnIn}
@@ -470,7 +514,10 @@ export function PresetsView() {
                       />
                       Вшить в видео
                     </label>
-                    <label className="flex items-center gap-2 text-[12px] text-muted">
+                    <label
+                      className="flex items-center gap-2 text-[12px] text-muted"
+                      title="Отдельный файл субтитров рядом с видео — можно загрузить на YouTube или редактировать."
+                    >
                       <Toggle
                         label="Сохранить .srt"
                         checked={current.subtitles.exportSrt}
@@ -486,7 +533,10 @@ export function PresetsView() {
 
               <Section title="Переходы">
                 <div className="flex flex-col gap-3.5">
-                  <div className="flex items-center gap-3">
+                  <div
+                    className="flex items-center gap-3"
+                    title="Переход между клипами: и в «Склейке», и между клипами хука в «Сборке под аудио»."
+                  >
                     <span className="w-28 shrink-0 text-[12px] text-muted">Тип</span>
                     <select
                       value={current.transition.type}
