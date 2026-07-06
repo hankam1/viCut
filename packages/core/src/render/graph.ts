@@ -91,10 +91,17 @@ function loudnormFilter(preset: Preset, loudnorm: LoudnormMode): string[] {
   ];
 }
 
-/** Per-input video normalization: fit target frame, unify fps/timebase/format. */
-function videoNormalizeChain(target: TargetSpec): string {
+/**
+ * Per-input video normalization: fit target frame, unify fps/timebase/format.
+ * inputZoom > 1 crops the frame edges first (hides border watermarks).
+ */
+function videoNormalizeChain(target: TargetSpec, inputZoom = 1): string {
+  const crop =
+    inputZoom > 1.001
+      ? `crop=trunc(iw/${inputZoom.toFixed(3)}/2)*2:trunc(ih/${inputZoom.toFixed(3)}/2)*2,`
+      : "";
   return (
-    `scale=${target.width}:${target.height}:force_original_aspect_ratio=decrease,` +
+    `${crop}scale=${target.width}:${target.height}:force_original_aspect_ratio=decrease,` +
     `pad=${target.width}:${target.height}:(ow-iw)/2:(oh-ih)/2:color=black,` +
     `fps=${target.fps},settb=AVTB,setsar=1,format=yuv420p`
   );
@@ -204,7 +211,7 @@ export function buildGraph(options: BuildGraphOptions): BuiltGraph {
 
   for (const [i] of inputs.entries()) {
     if (!audioOnly) {
-      chains.push(`[${i}:v]${videoNormalizeChain(target)}[v${i}]`);
+      chains.push(`[${i}:v]${videoNormalizeChain(target, preset.effects.inputZoom)}[v${i}]`);
     }
     const audioSrc = silenceIndexByInput.get(i) ?? i;
     chains.push(`[${audioSrc}:a]${AUDIO_NORMALIZE}[a${i}]`);
@@ -398,7 +405,9 @@ export async function buildAudioDrivenGraph(
         let clipsTotal = 0;
         for (const [ci, info] of infos.entries()) {
           inputArgs.push("-i", info.path);
-          chains.push(`[${inputIndex}:v]${videoNormalizeChain(target)}[s${si}c${ci}]`);
+          chains.push(
+            `[${inputIndex}:v]${videoNormalizeChain(target, preset.effects.inputZoom)}[s${si}c${ci}]`,
+          );
           durations.push(info.durationSec!);
           clipsTotal += info.durationSec!;
           inputIndex++;

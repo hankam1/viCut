@@ -580,6 +580,20 @@ export function PresetsView() {
               <Section title="Эффекты" defaultOpen={false}>
                 <div className="flex flex-col gap-3">
                   <Slider
+                    label="Зум исходника"
+                    value={current.effects.inputZoom}
+                    min={1}
+                    max={1.4}
+                    step={0.05}
+                    neutral={1}
+                    format={(v) => (v === 1 ? "выкл" : `×${v.toFixed(2)}`)}
+                    onChange={(inputZoom) => update({ effects: { ...current.effects, inputZoom } })}
+                  />
+                  <div className="pl-[124px] text-[11.5px] text-faint">
+                    Приближает клипы, обрезая края кадра — скрывает вотермарки у границ (например,
+                    плашку Veo). На картинки не влияет.
+                  </div>
+                  <Slider
                     label="Яркость"
                     value={current.effects.brightness}
                     min={-0.5}

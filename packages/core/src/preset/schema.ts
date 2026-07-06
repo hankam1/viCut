@@ -105,6 +105,11 @@ export const slideshowSchema = z.object({
 });
 
 export const effectsSchema = z.object({
+  /**
+   * Zoom into source clips (1.15 = crop 15% of the edges) — hides watermarks
+   * near the borders (e.g. AI-video badges). Images are not affected.
+   */
+  inputZoom: z.number().min(1).max(1.5).default(1),
   /** Path to a .cube LUT file, applied to all clips. */
   lut: z.string().nullable().default(null),
   /** eq filter: 0 is neutral for brightness; 1 is neutral for the rest. */
