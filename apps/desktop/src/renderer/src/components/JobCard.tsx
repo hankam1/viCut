@@ -1,9 +1,17 @@
+import { useEffect, useState } from "react";
 import { AlertTriangle, Check, FolderOpen, Play, RotateCcw, X } from "lucide-react";
 import type { QueueJob } from "@vicut/core";
 import type { LiveProgress } from "../hooks/useQueue.js";
-import { formatEta } from "../lib/format.js";
+import { formatDuration, formatEta } from "../lib/format.js";
 import { Button } from "./Button.js";
 import { Mark } from "./Mark.js";
+
+/** "YYYY-MM-DD HH:MM:SS" из SQLite (localtime) → миллисекунды. */
+function parseDbTime(value: string | null): number | null {
+  if (!value) return null;
+  const ms = new Date(value.replace(" ", "T")).getTime();
+  return Number.isFinite(ms) ? ms : null;
+}
 
 /** Стадия → полоса общего прогресса (из прототипа: 0–25 / 25–45 / 45–70 / 70–100). */
 const STAGE_BANDS: Record<string, { start: number; width: number; index: number }> = {
@@ -56,6 +64,21 @@ export function JobCard({
     : 0;
   const etaSec = live?.etaSec;
 
+  // Тикающее «идёт N» у running-задачи; у готовой — статичное «за N».
+  const [nowMs, setNowMs] = useState(() => Date.now());
+  useEffect(() => {
+    if (!running) return;
+    const timer = setInterval(() => setNowMs(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, [running]);
+  const startedMs = parseDbTime(job.startedAt);
+  const finishedMs = parseDbTime(job.finishedAt);
+  const elapsedSec = running && startedMs ? Math.max(0, (nowMs - startedMs) / 1000) : null;
+  const tookSec =
+    job.status === "done" && startedMs && finishedMs
+      ? Math.max(0, (finishedMs - startedMs) / 1000)
+      : null;
+
   return (
     <div
       className={`relative overflow-hidden rounded-lg border bg-surface p-3.5 transition-colors duration-[var(--vc-dur-base)] ${
@@ -95,8 +118,14 @@ export function JobCard({
           )}
           {job.status === "done" && (
             <>
-              <span className="flex items-center gap-1 text-[12px] font-medium text-success">
+              <span
+                className="flex items-center gap-1 text-[12px] font-medium text-success"
+                title={job.startedAt ? `Старт: ${job.startedAt}` : undefined}
+              >
                 <Check size={14} strokeWidth={2} /> Готово
+                {tookSec !== null && (
+                  <span className="tnum font-normal text-muted">за {formatDuration(tookSec)}</span>
+                )}
               </span>
               <Button onClick={() => void window.vicut.shell.openPath(job.output)}>
                 <Play size={13} strokeWidth={1.5} /> Открыть
@@ -138,9 +167,11 @@ export function JobCard({
       {running && (
         <div className="mt-2 flex items-center justify-between pl-[76px]">
           <StagesRow activeIndex={stageIndex} />
-          {etaSec != null && (
-            <span className="tnum text-[11.5px] text-muted">{formatEta(etaSec)}</span>
-          )}
+          <span className="tnum text-[11.5px] text-muted">
+            {elapsedSec !== null ? `идёт ${formatDuration(elapsedSec)}` : ""}
+            {elapsedSec !== null && etaSec != null ? " · " : ""}
+            {etaSec != null ? formatEta(etaSec) : ""}
+          </span>
         </div>
       )}
 
