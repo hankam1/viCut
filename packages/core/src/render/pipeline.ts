@@ -196,6 +196,23 @@ export async function prepareRender(
       }
     }
 
+    // Аудио секций декодируется в чистый WAV-промежуток: файлы из ботов и
+    // конвертеров бывают со сломанной структурой кадров (склейка VBR-кусков),
+    // от которой ffmpeg молча обрывает ВИДЕОпоток посреди рендера. Декод в
+    // PCM нормализует всё без потерь; длительности дальше берутся честные.
+    if (spec.kind === "audio-driven") {
+      for (const [si, section] of sectionInfos.entries()) {
+        emit("probe", null, `подготовка аудио ${si + 1}/${sectionInfos.length}`);
+        const clean = path.join(tmpDir, `audio-${si}.wav`);
+        await runFfmpeg(options.tools.ffmpeg.path, [
+          "-y", "-i", section.audio.path,
+          "-vn", "-ar", "48000", "-ac", "2", "-c:a", "pcm_s16le",
+          clean,
+        ]);
+        sectionInfos[si] = { ...section, audio: await doProbe(clean) };
+      }
+    }
+
     const reference =
       spec.kind === "stitch" ? stitchInfos : [sectionInfos[0]!.visuals.infos[0]!];
     const target = computeTargetSpec(reference, preset);
