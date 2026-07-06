@@ -6,6 +6,7 @@ export interface LiveProgress {
   stage: string;
   percent: number | null;
   detail?: string;
+  etaSec?: number | null;
 }
 
 export interface QueueState {
@@ -48,7 +49,12 @@ export function useQueue(): QueueState {
       const event = payload as JobProgressEvent;
       setProgress((prev) => {
         const next = new Map(prev);
-        next.set(event.jobId, { stage: event.stage, percent: event.percent, detail: event.detail });
+        next.set(event.jobId, {
+          stage: event.stage,
+          percent: event.percent,
+          detail: event.detail,
+          etaSec: event.etaSec,
+        });
         return next;
       });
     });

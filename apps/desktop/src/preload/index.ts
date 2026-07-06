@@ -31,6 +31,8 @@ export interface JobProgressEvent {
   stage: RenderStage;
   percent: number | null;
   detail?: string;
+  /** Оценка оставшегося времени стадии, сек. */
+  etaSec?: number | null;
 }
 
 export interface JobFinishedEvent {

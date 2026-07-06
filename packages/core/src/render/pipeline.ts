@@ -34,6 +34,8 @@ export interface RenderProgressEvent {
   /** 0-100 within the stage, null when indeterminate. */
   percent: number | null;
   detail?: string;
+  /** Оценка оставшегося времени стадии, сек; null когда неизвестно. */
+  etaSec?: number | null;
 }
 
 export interface RenderRequest {
@@ -276,8 +278,12 @@ export async function encodeRender(
 ): Promise<RenderResult> {
   const { request, measured, assPath, srtPath, transcript } = prepared;
   const { preset, spec } = request;
-  const emit = (stage: RenderStage, percent: number | null, detail?: string): void =>
-    options.onProgress?.({ stage, percent, detail });
+  const emit = (
+    stage: RenderStage,
+    percent: number | null,
+    detail?: string,
+    etaSec?: number | null,
+  ): void => options.onProgress?.({ stage, percent, detail, etaSec });
 
   try {
     const encoder = await selectEncoder(
@@ -318,7 +324,12 @@ export async function encodeRender(
     await runFfmpeg(options.tools.ffmpeg.path, args, {
       totalDurationSec: graph.totalDurationSec,
       onProgress: (p) =>
-        emit("encode", p.percent, p.speed ? `${encoder.name} · ${p.speed.toFixed(1)}x` : encoder.name),
+        emit(
+          "encode",
+          p.percent,
+          p.speed ? `${encoder.name} · ${p.speed.toFixed(1)}x` : encoder.name,
+          p.speed ? Math.max(0, (graph.totalDurationSec - p.outTimeSec) / p.speed) : null,
+        ),
     });
 
     return {
@@ -339,7 +350,7 @@ async function encodeSections(
   options: RenderOptions,
   encoderName: string,
   encoderArgs: string[],
-  emit: (stage: RenderStage, percent: number | null, detail?: string) => void,
+  emit: (stage: RenderStage, percent: number | null, detail?: string, etaSec?: number | null) => void,
 ): Promise<RenderResult> {
   const { request, measured, transcript, sectionInfos, target, tmpDir } = prepared;
   const { preset } = request;
@@ -396,6 +407,8 @@ async function encodeSections(
           ((base + ((p.percent ?? 0) / 100) * secDur) / totalDur) * 99,
           `${encoderName} · секция ${si + 1}/${sectionInfos.length}` +
             (p.speed ? ` · ${p.speed.toFixed(1)}x` : ""),
+          // Скорость соседних секций близка — оценка на весь остаток кодирования.
+          p.speed ? Math.max(0, (totalDur - (base + p.outTimeSec)) / p.speed) : null,
         ),
     });
     parts.push(partPath);

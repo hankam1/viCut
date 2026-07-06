@@ -1,3 +1,12 @@
+/** Оставшееся время человеческим языком: «осталось ~4 мин». */
+export function formatEta(seconds: number): string {
+  if (seconds < 8) return "почти готово";
+  if (seconds < 60) return "осталось меньше минуты";
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 60) return `осталось ~${minutes} мин`;
+  return `осталось ~${Math.floor(minutes / 60)} ч ${minutes % 60} мин`;
+}
+
 export function formatDuration(totalSeconds: number): string {
   const s = Math.round(totalSeconds);
   const hours = Math.floor(s / 3600);

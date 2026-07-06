@@ -1,6 +1,7 @@
 import { AlertTriangle, Check, FolderOpen, Play, RotateCcw, X } from "lucide-react";
 import type { QueueJob } from "@vicut/core";
 import type { LiveProgress } from "../hooks/useQueue.js";
+import { formatEta } from "../lib/format.js";
 import { Button } from "./Button.js";
 import { Mark } from "./Mark.js";
 
@@ -53,7 +54,7 @@ export function JobCard({
   const stageIndex = running
     ? (STAGE_BANDS[live?.stage ?? job.stage ?? "probe"]?.index ?? 0)
     : 0;
-  const speed = live?.detail?.match(/[\d.]+x$/)?.[0];
+  const etaSec = live?.etaSec;
 
   return (
     <div
@@ -137,7 +138,9 @@ export function JobCard({
       {running && (
         <div className="mt-2 flex items-center justify-between pl-[76px]">
           <StagesRow activeIndex={stageIndex} />
-          {speed && <span className="tnum text-[11.5px] text-muted">{speed} realtime</span>}
+          {etaSec != null && (
+            <span className="tnum text-[11.5px] text-muted">{formatEta(etaSec)}</span>
+          )}
         </div>
       )}
 
