@@ -505,10 +505,31 @@ export async function buildAudioDrivenGraph(
               `trim=duration=${nextDur.toFixed(4)},setpts=PTS-STARTPTS[s${si}next]`,
           );
           // Альфа одинакова по всему кадру — считается на 2×2 (geq дёшев) и
-          // растягивается до целевого размера.
+          // растягивается до целевого размера. ДВЕ тонкости синхронизации,
+          // без которых на части границ вспыхивает картинка через одну:
+          // (1) границы картинок квантуются в сетку демьюксера — 1/25 с
+          //     округлением накопленной суммы (st(1));
+          // (2) закрытие окна — по той же round-логике, по которой fps-фильтр
+          //     выбирает кадр для слота (round(pts·fps)), а не по lt(T,b).
+          // +0.0001 тика: демьюксер округляет точной рациональной арифметикой
+          // (X.525 → вверх), а double в geq даёт X.5249999 → вниз; эпсилон
+          // выравнивает поведение и на честных ties (NEAR-округление — вверх).
+          // Третья строка: кадр, лежащий ровно на номинальной границе k·per,
+          // попадает floor'ом в окно k+1, хотя квантованная граница k ещё не
+          // наступила — тогда шаг назад (иначе альфа обнуляется на кадр
+          // раньше смены картинки и старый кадр «вспыхивает»).
+          const per = perImage.toFixed(6);
+          const fps = target.fps;
+          const alpha =
+            `st(0,floor(T/${per})+1);` +
+            `st(1,round((ld(0)-1)*${per}*25+0.0001)/25);` +
+            `st(0,ld(0)-lt(round(T*${fps}),round(ld(1)*${fps})));` +
+            `st(1,round(ld(0)*${per}*25+0.0001)/25);` +
+            `255*clip((T-(ld(1)-${fade.toFixed(4)}))/${fade.toFixed(4)},0,1)` +
+            `*lt(round(T*${fps}),round(ld(1)*${fps}))`;
           chains.push(
             `color=c=white:s=2x2:r=${target.fps}:d=${nextDur.toFixed(4)},format=gray,` +
-              `geq=lum='255*clip((mod(T,${perImage.toFixed(4)})-${(perImage - fade).toFixed(4)})/${fade.toFixed(4)},0,1)',` +
+              `geq=lum='${alpha}',` +
               `scale=${target.width}:${target.height}:flags=neighbor,settb=AVTB[s${si}mask]`,
           );
           chains.push(`[s${si}next][s${si}mask]alphamerge[s${si}over]`);
