@@ -14,6 +14,7 @@ interface RawStream {
   sample_rate?: string;
   channels?: number;
   channel_layout?: string;
+  duration?: string;
 }
 
 interface RawFormat {
@@ -49,6 +50,7 @@ function toVideoInfo(stream: RawStream): VideoStreamInfo {
     fps: parseFps(stream),
     pixelFormat: stream.pix_fmt ?? null,
     bitrateBps: toNumber(stream.bit_rate),
+    durationSec: toNumber(stream.duration),
   };
 }
 

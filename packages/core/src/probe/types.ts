@@ -5,6 +5,11 @@ export interface VideoStreamInfo {
   fps: number | null;
   pixelFormat: string | null;
   bitrateBps: number | null;
+  /**
+   * Длительность именно видеопотока (может быть короче контейнера, если
+   * видео оборвалось, а аудио дописалось), null когда неизвестна.
+   */
+  durationSec: number | null;
 }
 
 export interface AudioStreamInfo {

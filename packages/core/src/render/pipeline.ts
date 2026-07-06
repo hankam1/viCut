@@ -111,6 +111,29 @@ export interface PreparedRender {
   cleanup: () => Promise<void>;
 }
 
+/**
+ * Защита от тихой порчи: при сбое чтения исходника ffmpeg может закрыть
+ * видеопоток, честно дописать аудио и выйти с кодом 0 — файл «готов», но
+ * картинка обрывается на середине. Ловим по длительности видеопотока.
+ */
+async function assertVideoDuration(
+  filePath: string,
+  ffprobePath: string,
+  expectedSec: number,
+  label: string,
+): Promise<void> {
+  const info = await probe(filePath, ffprobePath);
+  const actual = info.video?.durationSec ?? info.durationSec ?? 0;
+  const tolerance = Math.max(0.5, Math.min(2, expectedSec * 0.05));
+  if (expectedSec - actual > tolerance) {
+    throw new RenderError(
+      `${label}: видеопоток получился ${actual.toFixed(1)} сек вместо ожидаемых ` +
+        `${expectedSec.toFixed(1)} — похоже, во время кодирования оборвалось чтение ` +
+        `исходников. Запусти задачу ещё раз.`,
+    );
+  }
+}
+
 /** Сегменты, попадающие в окно секции, со сдвигом в её локальное время. */
 function sliceTranscript(
   segments: TranscriptSegment[],
@@ -352,6 +375,12 @@ export async function encodeRender(
           p.speed ? Math.max(0, (graph.totalDurationSec - p.outTimeSec) / p.speed) : null,
         ),
     });
+    await assertVideoDuration(
+      request.output,
+      options.tools.ffprobe.path,
+      graph.totalDurationSec,
+      "итоговый файл",
+    );
 
     return {
       output: request.output,
@@ -432,6 +461,12 @@ async function encodeSections(
           p.speed ? Math.max(0, (totalDur - (base + p.outTimeSec)) / p.speed) : null,
         ),
     });
+    await assertVideoDuration(
+      partPath,
+      options.tools.ffprobe.path,
+      secDur,
+      `секция ${si + 1}`,
+    );
     parts.push(partPath);
     doneDur += secDur;
   }
@@ -449,6 +484,7 @@ async function encodeSections(
     ["-y", "-f", "concat", "-safe", "0", "-i", listPath, "-c", "copy", "-movflags", "+faststart", request.output],
     { totalDurationSec: totalDur, onProgress: () => emit("encode", 99.5, "склейка") },
   );
+  await assertVideoDuration(request.output, options.tools.ffprobe.path, totalDur, "итоговый файл");
 
   return {
     output: request.output,
