@@ -94,16 +94,20 @@ function loudnormFilter(preset: Preset, loudnorm: LoudnormMode): string[] {
 /**
  * Per-input video normalization: fit target frame, unify fps/timebase/format.
  * inputZoom > 1 crops the frame edges first (hides border watermarks).
+ * smooth=true converts frame rate with blending (framerate) instead of
+ * duplication (fps) — smooths judder on mismatched-fps clips; NOT for image
+ * slideshows (blending across image cuts would smear them).
  */
-export function videoNormalizeChain(target: TargetSpec, inputZoom = 1): string {
+export function videoNormalizeChain(target: TargetSpec, inputZoom = 1, smooth = false): string {
   const crop =
     inputZoom > 1.001
       ? `crop=trunc(iw/${inputZoom.toFixed(3)}/2)*2:trunc(ih/${inputZoom.toFixed(3)}/2)*2,`
       : "";
+  const rate = smooth ? `framerate=${target.fps}` : `fps=${target.fps}`;
   return (
     `${crop}scale=${target.width}:${target.height}:force_original_aspect_ratio=decrease,` +
     `pad=${target.width}:${target.height}:(ow-iw)/2:(oh-ih)/2:color=black,` +
-    `fps=${target.fps},settb=AVTB,setsar=1,format=yuv420p`
+    `${rate},settb=AVTB,setsar=1,format=yuv420p`
   );
 }
 
@@ -211,7 +215,9 @@ export function buildGraph(options: BuildGraphOptions): BuiltGraph {
 
   for (const [i] of inputs.entries()) {
     if (!audioOnly) {
-      chains.push(`[${i}:v]${videoNormalizeChain(target, preset.effects.inputZoom)}[v${i}]`);
+      chains.push(
+        `[${i}:v]${videoNormalizeChain(target, preset.effects.inputZoom, true)}[v${i}]`,
+      );
     }
     const audioSrc = silenceIndexByInput.get(i) ?? i;
     chains.push(`[${audioSrc}:a]${AUDIO_NORMALIZE}[a${i}]`);
@@ -327,8 +333,11 @@ function kenBurnsChain(
   phase: "main" | "shifted" = "main",
 ): string {
   const ss = preset.slideshow;
-  // Суперсэмпл минимум ×2: сдвиг кропа zoompan квантуется в пикселях ВХОДА,
-  // и при малом запасе картинка заметно дрожит (проверено на реальном рендере).
+  // Зум — через perspective, НЕ zoompan: zoompan сдвигает окно кропа целыми
+  // пикселями, и на медленном зуме (десятки секунд на картинку) движение
+  // превращается в заметное «тиканье». perspective принимает дробные
+  // координаты и ресэмплирует субпиксельно — движение гладкое.
+  // Суперсэмпл ×2 — запас, чтобы кроп не апскейлил исходник.
   const ssFactor = Math.min(2.5, Math.max(2, ss.zoom + 0.5));
   const ssW = Math.round((target.width * ssFactor) / 2) * 2;
   const ssH = Math.round((target.height * ssFactor) / 2) * 2;
@@ -337,22 +346,29 @@ function kenBurnsChain(
   const span = ((perImageSec + fadeSec) * target.fps).toFixed(4);
   const z = ss.zoom.toFixed(3);
   const speed = ss.speed.toFixed(3);
-  // Commas are safe: the whole expression is single-quoted for the graph
-  // parser. zoompan's frame counter is `in` (not the usual `n`).
+  // Commas are safe: every expression is single-quoted for the graph parser.
+  // ВАЖНО: у perspective счётчик `in` начинается с 1 (у zoompan — с 0);
+  // без поправки зум прыгает на один кадр на каждой границе картинок.
+  const frame = `(in-1)`;
   // Progress of the current image's zoom, 0..1, scaled by speed and capped.
   const offset = phase === "main" ? `+${ff}` : `-(${fpi}-${ff})`;
-  const p = `clip(${speed}*(mod(in,${fpi})${offset})/${span},0,1)`;
+  const p = `clip(${speed}*(mod(${frame},${fpi})${offset})/${span},0,1)`;
   const zoomIn = `1+(${z}-1)*${p}`;
   const zoomOut = `${z}-(${z}-1)*${p}`;
   // The shifted stream's list starts one image ahead, so its local frame
   // counter maps local image k to original image k+1 — parity is inverted.
   const [even, odd] = phase === "main" ? [zoomIn, zoomOut] : [zoomOut, zoomIn];
-  const zoomExpr = `if(eq(mod(floor(in/${fpi}),2),0),${even},${odd})`;
+  const zoomExpr = `if(eq(mod(floor(${frame}/${fpi}),2),0),${even},${odd})`;
+  // Отступ видимого окна от краёв кадра при зуме Z (по каждой оси).
+  const mx = `(W*(1-1/(${zoomExpr}))/2)`;
+  const my = `(H*(1-1/(${zoomExpr}))/2)`;
   return (
     `scale=${ssW}:${ssH}:force_original_aspect_ratio=decrease,` +
     `pad=${ssW}:${ssH}:(ow-iw)/2:(oh-ih)/2:color=black,fps=${target.fps},` +
-    `zoompan=z='${zoomExpr}':x='(iw-iw/zoom)/2':y='(ih-ih/zoom)/2'` +
-    `:d=1:s=${target.width}x${target.height}:fps=${target.fps},` +
+    `perspective=x0='${mx}':y0='${my}':x1='W-${mx}':y1='${my}'` +
+    `:x2='${mx}':y2='H-${my}':x3='W-${mx}':y3='H-${my}'` +
+    `:interpolation=linear:eval=frame,` +
+    `scale=${target.width}:${target.height},` +
     `settb=AVTB,setsar=1,format=yuv420p`
   );
 }
@@ -410,7 +426,7 @@ export async function buildAudioDrivenGraph(
         for (const [ci, info] of infos.entries()) {
           inputArgs.push("-i", info.path);
           chains.push(
-            `[${inputIndex}:v]${videoNormalizeChain(target, preset.effects.inputZoom)}[s${si}c${ci}]`,
+            `[${inputIndex}:v]${videoNormalizeChain(target, preset.effects.inputZoom, true)}[s${si}c${ci}]`,
           );
           clipLabels.push(`[s${si}c${ci}]`);
           clipsTotal += info.durationSec!;
@@ -424,8 +440,10 @@ export async function buildAudioDrivenGraph(
           merged = `s${si}cat`;
           chains.push(`${clipLabels.join("")}concat=n=${clipLabels.length}:v=1:a=0[${merged}]`);
         }
+        // framerate вместо fps: спидфит даёт нецелый исходный fps, жёсткий
+        // дроп кадров превращает движение камеры в рывки — смешивание глаже.
         chains.push(
-          `[${merged}]setpts=PTS/${speed.toFixed(6)},fps=${target.fps},` +
+          `[${merged}]setpts=PTS/${speed.toFixed(6)},framerate=${target.fps},` +
             `trim=duration=${audioDur.toFixed(3)},setpts=PTS-STARTPTS[v${si}]`,
         );
       } else {

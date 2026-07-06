@@ -56,7 +56,7 @@ export async function prestitchClips(options: PrestitchOptions): Promise<MediaIn
   f = Math.min(f, Math.min(...durations) / 2 - 0.1);
   if (f < 0.05) return null;
 
-  const normalize = videoNormalizeChain(target, preset.effects.inputZoom);
+  const normalize = videoNormalizeChain(target, preset.effects.inputZoom, true);
   const pieces: string[] = [];
   const encode = async (args: string[], out: string): Promise<void> => {
     await runFfmpeg(options.ffmpegPath, [
