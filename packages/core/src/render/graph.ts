@@ -312,20 +312,47 @@ export function concatListPath(filePath: string): string {
   return `'${filePath.replace(/\\/g, "/").replace(/'/g, "'\\''")}'`;
 }
 
+/** True when any slideshow motion effect needs the perspective pass. */
+export function slideshowWantsMotion(preset: Preset): boolean {
+  const ss = preset.slideshow;
+  return ss.kenBurns || ss.pendulum.enabled || ss.pan.enabled || ss.shake.enabled;
+}
+
 /**
- * Ken Burns for a uniform slideshow stream: zoompan whose zoom expression
- * restarts on every image boundary (frames-per-image is constant within a
- * section), alternating zoom-in / zoom-out per image. The stream is
- * supersampled ×2 beforehand so the crop never upscales.
+ * Плавный псевдошум −1..1: сумма двух несоизмеримых синусов. Детерминирован
+ * и непрерывен (random() в ffmpeg некогерентен между кадрами — не годится).
+ */
+function noiseExpr(
+  freqA: number,
+  freqB: number,
+  phaseA: number,
+  phaseB: number,
+  speed: number,
+  frame: string,
+  fps: number,
+): string {
+  const ka = ((2 * Math.PI * freqA * speed) / fps).toFixed(6);
+  const kb = ((2 * Math.PI * freqB * speed) / fps).toFixed(6);
+  return `((sin(${ka}*${frame}+${phaseA})+0.6*sin(${kb}*${frame}+${phaseB}))/1.6)`;
+}
+
+/**
+ * Motion pass for a uniform slideshow stream: Ken Burns zoom, pendulum swing,
+ * pan drift and handheld shake, all expressed as one per-frame `perspective`
+ * quad (fractional corner coordinates → subpixel-smooth, effects compose).
+ * The stream is supersampled beforehand so the crop never upscales, and a
+ * constant safety zoom guarantees the rotated/shifted window stays inside
+ * the frame (no black corners).
  *
  * With a crossfade, an image is visible for fade+perImage seconds (it fades in
- * during the previous image's tail), so the zoom spans that window. The
- * "shifted" phase generates the same images as the crossfade overlay stream
- * (which starts one image ahead): its zoom starts at the fade start and
- * lands exactly on the "main" stream's phase at the cut, so the zoom is
- * continuous across the transition.
+ * during the previous image's tail), so per-image motion spans that window.
+ * The "shifted" phase generates the same images as the crossfade overlay
+ * stream (which starts one image ahead): its motion starts at the fade start
+ * and lands exactly on the "main" stream's phase at the cut, so zoom/pan/swing
+ * are continuous across the transition. Shake is keyed to the composite clock
+ * (both streams share it), so the blend never double-exposes.
  */
-function kenBurnsChain(
+function motionChain(
   target: TargetSpec,
   perImageSec: number,
   preset: Preset,
@@ -333,40 +360,119 @@ function kenBurnsChain(
   phase: "main" | "shifted" = "main",
 ): string {
   const ss = preset.slideshow;
+  const pend = ss.pendulum.enabled ? ss.pendulum : null;
+  const pan = ss.pan.enabled ? ss.pan : null;
+  const shake = ss.shake.enabled ? ss.shake : null;
+  const fps = target.fps;
+
+  // Запас зума, чтобы повёрнутое/сдвинутое окно не выехало за кадр: габарит
+  // повёрнутого окна + смещение центра (пивот у края качает центр) + пан/шейк.
+  const rollDeg = shake ? 0.15 * shake.intensity : 0;
+  const maxRad = (((pend?.angleDeg ?? 0) + rollDeg) * Math.PI) / 180;
+  const sinM = Math.sin(maxRad);
+  const cosM = Math.cos(maxRad);
+  const panX = pan && pan.axis !== "vertical" ? pan.amount / 2 : 0;
+  const panY = pan && pan.axis !== "horizontal" ? pan.amount / 2 : 0;
+  const shakeFrac = shake ? 0.004 * shake.intensity : 0;
+  const edgePivot = pend && pend.pivot !== "center" ? 1 : 0;
+  const w0 = target.width;
+  const h0 = target.height;
+  const zx = (w0 * cosM + h0 * sinM * (1 + edgePivot)) / (w0 * (1 - 2 * (panX + shakeFrac)));
+  const zy =
+    (w0 * sinM + h0 * cosM + edgePivot * h0 * (1 - cosM)) / (h0 * (1 - 2 * (panY + shakeFrac)));
+  const zSafe = Math.max(1, zx, zy);
+
   // Зум — через perspective, НЕ zoompan: zoompan сдвигает окно кропа целыми
   // пикселями, и на медленном зуме (десятки секунд на картинку) движение
   // превращается в заметное «тиканье». perspective принимает дробные
   // координаты и ресэмплирует субпиксельно — движение гладкое.
-  // Суперсэмпл ×2 — запас, чтобы кроп не апскейлил исходник.
-  const ssFactor = Math.min(2.5, Math.max(2, ss.zoom + 0.5));
+  // Суперсэмпл — запас, чтобы кроп не апскейлил исходник.
+  const maxZoom = (ss.kenBurns ? ss.zoom : 1) * zSafe;
+  const ssFactor = Math.min(2.5, Math.max(2, maxZoom + 0.5));
   const ssW = Math.round((target.width * ssFactor) / 2) * 2;
   const ssH = Math.round((target.height * ssFactor) / 2) * 2;
-  const fpi = (perImageSec * target.fps).toFixed(4);
-  const ff = (fadeSec * target.fps).toFixed(4);
-  const span = ((perImageSec + fadeSec) * target.fps).toFixed(4);
-  const z = ss.zoom.toFixed(3);
-  const speed = ss.speed.toFixed(3);
+
+  const fpi = (perImageSec * fps).toFixed(4);
+  const ff = (fadeSec * fps).toFixed(4);
+  const span = ((perImageSec + fadeSec) * fps).toFixed(4);
   // Commas are safe: every expression is single-quoted for the graph parser.
   // ВАЖНО: у perspective счётчик `in` начинается с 1 (у zoompan — с 0);
-  // без поправки зум прыгает на один кадр на каждой границе картинок.
+  // без поправки движение прыгает на один кадр на каждой границе картинок.
   const frame = `(in-1)`;
-  // Progress of the current image's zoom, 0..1, scaled by speed and capped.
+  // Кадр внутри жизни текущей картинки и её индекс в ИСХОДНОМ списке
+  // (список shifted-потока начат на одну картинку вперёд — индекс сдвинут).
   const offset = phase === "main" ? `+${ff}` : `-(${fpi}-${ff})`;
-  const p = `clip(${speed}*(mod(${frame},${fpi})${offset})/${span},0,1)`;
-  const zoomIn = `1+(${z}-1)*${p}`;
-  const zoomOut = `${z}-(${z}-1)*${p}`;
-  // The shifted stream's list starts one image ahead, so its local frame
-  // counter maps local image k to original image k+1 — parity is inverted.
-  const [even, odd] = phase === "main" ? [zoomIn, zoomOut] : [zoomOut, zoomIn];
-  const zoomExpr = `if(eq(mod(floor(${frame}/${fpi}),2),0),${even},${odd})`;
-  // Отступ видимого окна от краёв кадра при зуме Z (по каждой оси).
-  const mx = `(W*(1-1/(${zoomExpr}))/2)`;
-  const my = `(H*(1-1/(${zoomExpr}))/2)`;
+  const local = `(mod(${frame},${fpi})${offset})`;
+  const oi = phase === "main" ? `floor(${frame}/${fpi})` : `(floor(${frame}/${fpi})+1)`;
+  // Линейный прогресс жизни картинки 0..1 (пан) — без учёта скорости зума.
+  const linProgress = `clip(${local}/${span},0,1)`;
+
+  // --- Зум Ken Burns: чётные картинки приближаются, нечётные отдаляются ---
+  let zoomExpr = "1";
+  if (ss.kenBurns) {
+    const z = ss.zoom.toFixed(3);
+    const p = `clip(${ss.speed.toFixed(3)}*${local}/${span},0,1)`;
+    zoomExpr = `if(eq(mod(${oi},2),0),1+(${z}-1)*${p},${z}-(${z}-1)*${p})`;
+  }
+  const ztot = zSafe > 1.0001 ? `(${zoomExpr})*${zSafe.toFixed(4)}` : zoomExpr;
+
+  // --- Угол поворота: маятник + микро-ролл дрожания, радианы ---
+  const thetaParts: string[] = [];
+  if (pend) {
+    const amp = ((pend.angleDeg * Math.PI) / 180).toFixed(6);
+    const periodF = (pend.periodSec * fps).toFixed(4);
+    const sign = pend.alternate ? `(1-2*mod(${oi},2))*` : "";
+    thetaParts.push(`${sign}${amp}*sin(2*PI*${local}/${periodF})`);
+  }
+  if (shake) {
+    const rollAmp = ((rollDeg * Math.PI) / 180).toFixed(6);
+    thetaParts.push(`${rollAmp}*${noiseExpr(0.3, 0.8, 5.1, 2.3, shake.speed, frame, fps)}`);
+  }
+  const theta = thetaParts.length > 0 ? thetaParts.join("+") : "0";
+
+  // --- Центр окна: середина кадра + дрейф панорамы + шейк ---
+  // Шейк — по счётчику кадров композиции (у main и shifted он совпадает),
+  // чтобы во время кроссфейда оба потока тряслись одинаково.
+  let cx = `W/2`;
+  let cy = `H/2`;
+  if (pan) {
+    const travel = `(2*${linProgress}-1)`;
+    const ax = (pan.amount / 2).toFixed(5);
+    if (pan.axis === "horizontal") {
+      cx += `+(1-2*mod(${oi},2))*${ax}*W*${travel}`;
+    } else if (pan.axis === "vertical") {
+      cy += `+(1-2*mod(${oi},2))*${ax}*H*${travel}`;
+    } else {
+      const dir = `(1-2*mod(floor(${oi}/2),2))`;
+      cx += `+eq(mod(${oi},2),0)*${dir}*${ax}*W*${travel}`;
+      cy += `+eq(mod(${oi},2),1)*${dir}*${ax}*H*${travel}`;
+    }
+  }
+  if (shake) {
+    const sAmp = (0.004 * shake.intensity).toFixed(6);
+    cx += `+${sAmp}*W*${noiseExpr(0.35, 0.9, 1.3, 4.1, shake.speed, frame, fps)}`;
+    cy += `+${sAmp}*H*${noiseExpr(0.45, 1.1, 2.9, 0.7, shake.speed, frame, fps)}`;
+  }
+
+  // --- Углы квада: окно W/Z × H/Z в центре (cx,cy), повёрнутое на theta
+  // вокруг точки опоры (центр или середина верхнего/нижнего края).
+  // st/ld локальны для каждого из 8 выражений — общий пролог в каждом.
+  const py = !pend || pend.pivot === "center" ? "0" : pend.pivot === "top" ? "(0-ld(3))" : "ld(3)";
+  const corner = (sx: number, sy: number, coord: "x" | "y"): string => {
+    const pre = `st(0,${theta});st(1,${ztot});st(2,W/(2*ld(1)));st(3,H/(2*ld(1)));`;
+    const rel = `((${sy})*ld(3)-(${py}))`;
+    return coord === "x"
+      ? `${pre}(${cx})+cos(ld(0))*(${sx})*ld(2)-sin(ld(0))*${rel}`
+      : `${pre}(${cy})+(${py})+sin(ld(0))*(${sx})*ld(2)+cos(ld(0))*${rel}`;
+  };
+
   return (
     `scale=${ssW}:${ssH}:force_original_aspect_ratio=decrease,` +
-    `pad=${ssW}:${ssH}:(ow-iw)/2:(oh-ih)/2:color=black,fps=${target.fps},` +
-    `perspective=x0='${mx}':y0='${my}':x1='W-${mx}':y1='${my}'` +
-    `:x2='${mx}':y2='H-${my}':x3='W-${mx}':y3='H-${my}'` +
+    `pad=${ssW}:${ssH}:(ow-iw)/2:(oh-ih)/2:color=black,fps=${fps},` +
+    `perspective=x0='${corner(-1, -1, "x")}':y0='${corner(-1, -1, "y")}'` +
+    `:x1='${corner(1, -1, "x")}':y1='${corner(1, -1, "y")}'` +
+    `:x2='${corner(-1, 1, "x")}':y2='${corner(-1, 1, "y")}'` +
+    `:x3='${corner(1, 1, "x")}':y3='${corner(1, 1, "y")}'` +
     `:interpolation=linear:eval=frame,` +
     `scale=${target.width}:${target.height},` +
     `settb=AVTB,setsar=1,format=yuv420p`
@@ -465,14 +571,24 @@ export async function buildAudioDrivenGraph(
         const fade = Math.min(preset.slideshow.crossfadeSec, 0.45 * perImage);
         const useCrossfade = section.visuals.infos.length > 1 && fade >= 0.05;
         const chainFor = (phase: "main" | "shifted"): string =>
-          preset.slideshow.kenBurns
-            ? kenBurnsChain(target, perImage, preset, useCrossfade ? fade : 0, phase)
+          slideshowWantsMotion(preset)
+            ? motionChain(target, perImage, preset, useCrossfade ? fade : 0, phase)
             : videoNormalizeChain(target);
+        // Виньетка и зерно — один раз поверх готовой ленты секции (после
+        // кроссфейда), чтобы шум не смешивался и не считался дважды.
+        const post: string[] = [];
+        if (preset.slideshow.vignette.enabled) {
+          post.push(`vignette=angle=${(preset.slideshow.vignette.strength * 1.35).toFixed(4)}`);
+        }
+        if (preset.slideshow.grain.enabled) {
+          post.push(`noise=alls=${Math.round(preset.slideshow.grain.strength)}:allf=t+u`);
+        }
+        const postStr = post.length > 0 ? `${post.join(",")},` : "";
 
         inputArgs.push("-f", "concat", "-safe", "0", "-i", listPath);
         if (!useCrossfade) {
           chains.push(
-            `[${inputIndex}:v]${chainFor("main")},` +
+            `[${inputIndex}:v]${chainFor("main")},${postStr}` +
               `trim=duration=${audioDur.toFixed(3)},setpts=PTS-STARTPTS[v${si}]`,
           );
           inputIndex++;
@@ -535,7 +651,7 @@ export async function buildAudioDrivenGraph(
           chains.push(`[s${si}next][s${si}mask]alphamerge[s${si}over]`);
           chains.push(
             `[s${si}base][s${si}over]overlay=eof_action=pass:format=auto,` +
-              `format=yuv420p,setsar=1[v${si}]`,
+              `format=yuv420p,${postStr}setsar=1[v${si}]`,
           );
         }
       }

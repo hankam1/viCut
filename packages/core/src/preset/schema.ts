@@ -92,6 +92,47 @@ export const transitionSchema = z.object({
   durationSec: z.number().min(0.1).max(5).default(0.5),
 });
 
+/** Pendulum swing: the frame slowly rocks side to side (CapCut-style). */
+export const slideshowPendulumSchema = z.object({
+  enabled: z.boolean().default(false),
+  /** Peak tilt, degrees. */
+  angleDeg: z.number().min(0.5).max(12).default(3),
+  /** Seconds for a full left-right-left swing. */
+  periodSec: z.number().min(1).max(20).default(6),
+  /** Rotation anchor: swing around the frame center or one of its edges. */
+  pivot: z.enum(["center", "top", "bottom"]).default("center"),
+  /** Alternate the initial swing direction on every image. */
+  alternate: z.boolean().default(true),
+});
+
+/** Slow drift across the image — the "pan" half of classic Ken Burns. */
+export const slideshowPanSchema = z.object({
+  enabled: z.boolean().default(false),
+  /** Fraction of the frame the window travels while an image is shown. */
+  amount: z.number().min(0.02).max(0.3).default(0.08),
+  /** Drift axis; "alternate" switches per image. */
+  axis: z.enum(["horizontal", "vertical", "alternate"]).default("alternate"),
+});
+
+/** Subtle handheld-camera wobble (smooth pseudo-noise, not jitter). */
+export const slideshowShakeSchema = z.object({
+  enabled: z.boolean().default(false),
+  intensity: z.number().min(0.2).max(3).default(1),
+  speed: z.number().min(0.25).max(3).default(1),
+});
+
+export const slideshowVignetteSchema = z.object({
+  enabled: z.boolean().default(false),
+  /** 0..1 — how much the frame corners darken. */
+  strength: z.number().min(0.1).max(1).default(0.4),
+});
+
+export const slideshowGrainSchema = z.object({
+  enabled: z.boolean().default(false),
+  /** Film-grain noise strength. */
+  strength: z.number().min(1).max(30).default(8),
+});
+
 /** Slideshow behavior for image sections in audio-driven jobs. */
 export const slideshowSchema = z.object({
   /** Ken Burns: slow zoom on each image instead of a static frame. */
@@ -102,6 +143,11 @@ export const slideshowSchema = z.object({
   speed: z.number().min(0.25).max(4).default(1),
   /** Crossfade between neighboring images, seconds; 0 = hard cuts. */
   crossfadeSec: z.number().min(0).max(2).default(0.5),
+  pendulum: slideshowPendulumSchema.prefault({}),
+  pan: slideshowPanSchema.prefault({}),
+  shake: slideshowShakeSchema.prefault({}),
+  vignette: slideshowVignetteSchema.prefault({}),
+  grain: slideshowGrainSchema.prefault({}),
 });
 
 export const effectsSchema = z.object({
