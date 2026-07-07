@@ -87,8 +87,13 @@ export const TRANSITION_TYPES = [
 ] as const;
 
 export const transitionSchema = z.object({
-  /** xfade transition between stitched clips; "none" = hard cut. */
+  /**
+   * Transition shape: xfade between stitched clips ("none" = hard cut) and
+   * the slideshow image change (there "none" keeps the plain dissolve; the
+   * slideshow on/off switch is slideshow.crossfadeSec = 0).
+   */
   type: z.enum(TRANSITION_TYPES).default("none"),
+  /** Duration for clip transitions; the slideshow uses crossfadeSec. */
   durationSec: z.number().min(0.1).max(5).default(0.5),
 });
 

@@ -620,8 +620,13 @@ export async function buildAudioDrivenGraph(
             `[${b}:v]${chainFor("shifted")},` +
               `trim=duration=${nextDur.toFixed(4)},setpts=PTS-STARTPTS[s${si}next]`,
           );
-          // Альфа одинакова по всему кадру — считается на 2×2 (geq дёшев) и
-          // растягивается до целевого размера. ДВЕ тонкости синхронизации,
+          // Форма перехода — из секции «Переходы»; длительность у слайдшоу
+          // своя (crossfadeSec, 0 = без перехода), а «none» оставляет обычное
+          // растворение — иначе старые пресеты молча потеряли бы кроссфейд.
+          // Равномерная альфа считается на 2×2 и растягивается neighbor'ом;
+          // пространственные маски (шторки, круг, дизолв) — на 1/8 разрешения
+          // с билинейным растяжением: мягкая кромка бесплатно, geq дёшев.
+          // ДВЕ тонкости синхронизации в прологе,
           // без которых на части границ вспыхивает картинка через одну:
           // (1) границы картинок квантуются в сетку демьюксера — 1/25 с
           //     округлением накопленной суммы (st(1));
@@ -636,22 +641,88 @@ export async function buildAudioDrivenGraph(
           // раньше смены картинки и старый кадр «вспыхивает»).
           const per = perImage.toFixed(6);
           const fps = target.fps;
-          const alpha =
-            `st(0,floor(T/${per})+1);` +
+          const fd = fade.toFixed(4);
+          // Пролог одинаков для geq (время T) и overlay/eq (время t):
+          // ld(1) — квантованная граница текущей картинки, ld(2) — прогресс
+          // перехода 0..1 (0 вне окна и после границы).
+          const pro = (t: string): string =>
+            `st(0,floor(${t}/${per})+1);` +
             `st(1,round((ld(0)-1)*${per}*25+0.0001)/25);` +
-            `st(0,ld(0)-lt(round(T*${fps}),round(ld(1)*${fps})));` +
+            `st(0,ld(0)-lt(round(${t}*${fps}),round(ld(1)*${fps})));` +
             `st(1,round(ld(0)*${per}*25+0.0001)/25);` +
-            `255*clip((T-(ld(1)-${fade.toFixed(4)}))/${fade.toFixed(4)},0,1)` +
-            `*lt(round(T*${fps}),round(ld(1)*${fps}))`;
+            `st(2,clip((${t}-(ld(1)-${fd}))/${fd},0,1)` +
+            `*lt(round(${t}*${fps}),round(ld(1)*${fps})))`;
+          const tt = preset.transition.type;
+          let alphaExpr = "255*ld(2)"; // none | fade: равномерное растворение
+          let spatial = false;
+          let overlayPos = "";
+          let eqStr = "";
+          switch (tt) {
+            case "dissolve":
+              // Порог из пиксельного хэша — классический зернистый дизолв;
+              // на маске 1/8 разрешения зерно получается ~8 px.
+              alphaExpr = "255*lt(mod(abs(sin(X*12.9898+Y*78.233))*43758.545,1),ld(2))";
+              spatial = true;
+              break;
+            case "wipeleft":
+              alphaExpr = "255*gt(X+0.5,W*(1-ld(2)))";
+              spatial = true;
+              break;
+            case "wiperight":
+              alphaExpr = "255*lt(X,W*ld(2))";
+              spatial = true;
+              break;
+            case "circleopen":
+              alphaExpr = "255*lt(hypot(X-W/2,Y-H/2),hypot(W/2,H/2)*ld(2)*1.05)";
+              spatial = true;
+              break;
+            case "circleclose":
+              // gt(ld(2),0): при прогрессе 0 радиус равен диагонали и углы
+              // проходили бы порог — вне окна маска обязана быть нулевой.
+              alphaExpr = "255*gte(hypot(X-W/2,Y-H/2),hypot(W/2,H/2)*(1-ld(2)*1.04))*gt(ld(2),0)";
+              spatial = true;
+              break;
+            case "slideleft":
+            case "slideright":
+              // Новая картинка наезжает целиком непрозрачной; движет её x
+              // оверлея — вне окна перехода W*(1-0) уводит слой за кадр.
+              alphaExpr = "255*gt(ld(2),0)";
+              overlayPos =
+                tt === "slideleft"
+                  ? `:x='${pro("t")};W*(1-ld(2))':y=0`
+                  : `:x='${pro("t")};0-W*(1-ld(2))':y=0`;
+              break;
+            case "fadeblack":
+            case "fadewhite": {
+              // Затухание в цвет: подмена картинки — шаг альфы на середине
+              // окна, спрятанный дипом яркости (насыщенность в ноль, иначе
+              // хрома красит «чёрный»). Крутизна 1.4 держит кадр полностью
+              // залитым вокруг шага. lt(ld(0),N) — чтобы конец последней
+              // картинки секции не гас без смены.
+              alphaExpr = "255*gte(ld(2),0.5)";
+              const dip =
+                `clip((1-abs(2*ld(2)-1))*1.4,0,1)*lt(ld(0),${section.visuals.infos.length})`;
+              const sign = tt === "fadeblack" ? "0-" : "";
+              eqStr =
+                `eq=brightness='${pro("t")};${sign}(${dip})'` +
+                `:saturation='${pro("t")};1-(${dip})':eval=frame,`;
+              break;
+            }
+            default:
+              break;
+          }
+          const maskW = spatial ? Math.max(16, 2 * Math.round(target.width / 16)) : 2;
+          const maskH = spatial ? Math.max(16, 2 * Math.round(target.height / 16)) : 2;
           chains.push(
-            `color=c=white:s=2x2:r=${target.fps}:d=${nextDur.toFixed(4)},format=gray,` +
-              `geq=lum='${alpha}',` +
-              `scale=${target.width}:${target.height}:flags=neighbor,settb=AVTB[s${si}mask]`,
+            `color=c=white:s=${maskW}x${maskH}:r=${target.fps}:d=${nextDur.toFixed(4)},format=gray,` +
+              `geq=lum='${pro("T")};${alphaExpr}',` +
+              `scale=${target.width}:${target.height}:flags=${spatial ? "bilinear" : "neighbor"},` +
+              `settb=AVTB[s${si}mask]`,
           );
           chains.push(`[s${si}next][s${si}mask]alphamerge[s${si}over]`);
           chains.push(
-            `[s${si}base][s${si}over]overlay=eof_action=pass:format=auto,` +
-              `format=yuv420p,${postStr}setsar=1[v${si}]`,
+            `[s${si}base][s${si}over]overlay=eof_action=pass:format=auto${overlayPos},` +
+              `format=yuv420p,${eqStr}${postStr}setsar=1[v${si}]`,
           );
         }
       }
