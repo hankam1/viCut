@@ -531,7 +531,11 @@ export function PresetsView() {
                     Появление — слова возникают по мере произнесения; подсветка — активное слово
                     выделяется цветом.
                   </div>
-                  <LivePreview style={current.subtitles.style} slideshow={current.slideshow} />
+                  <LivePreview
+                    style={current.subtitles.style}
+                    slideshow={current.slideshow}
+                    transitionType={current.transition.type}
+                  />
                   <SubGroup label="Вывод" />
                   <div className="flex items-center gap-6">
                     <label
@@ -568,7 +572,7 @@ export function PresetsView() {
                 <div className="flex flex-col gap-3.5">
                   <div
                     className="flex items-center gap-3"
-                    title="Переход между клипами: и в «Склейке», и между клипами хука в «Сборке под аудио»."
+                    title="Тип перехода: между клипами в «Склейке» и «Сборке под аудио», а также между картинками слайдшоу. Длительность ниже — для клипов; у слайдшоу своя — слайдер «Переход» в секции «Слайдшоу»."
                   >
                     <span className="w-28 shrink-0 text-[12px] text-muted">Тип</span>
                     <select
@@ -620,7 +624,8 @@ export function PresetsView() {
                     onChange={(crossfadeSec) => updateSlideshow({ crossfadeSec })}
                   />
                   <div className="pl-[124px] text-[11.5px] text-faint">
-                    Плавное растворение между соседними картинками в режиме «Сборка под аудио».
+                    Смена соседних картинок в «Сборке под аудио»: длительность — здесь, тип — из
+                    секции «Переходы» («Без перехода» = обычное растворение).
                   </div>
                   <SubGroup label="Эффекты картинок" />
                   <EffectRow
@@ -820,6 +825,7 @@ export function PresetsView() {
                   <LivePreview
                     style={current.subtitles.style}
                     slideshow={current.slideshow}
+                    transitionType={current.transition.type}
                     withSubtitles={false}
                   />
                   <div className="text-[11.5px] text-faint">

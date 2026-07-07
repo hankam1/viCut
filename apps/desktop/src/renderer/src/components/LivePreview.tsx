@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { ImagePlus, RotateCcw } from "lucide-react";
-import type { SlideshowSettings, SubtitleStyle } from "@vicut/core";
+import type { SlideshowSettings, SubtitleStyle, TransitionType } from "@vicut/core";
 
 const SAMPLE_WORDS = ["Так", "будут", "выглядеть", "субтитры", "в", "видео"];
 /** Секунд на «произнесение» одного слова и пауза перед повтором цикла. */
@@ -93,20 +93,31 @@ const GRAIN_TILE =
 export interface LivePreviewProps {
   style: SubtitleStyle;
   slideshow: SlideshowSettings;
+  /** Тип перехода из секции «Переходы» — слайдшоу в превью показывает его же. */
+  transitionType?: TransitionType;
   /** Показывать ли строку субтитров (в секции «Слайдшоу» она тоже полезна). */
   withSubtitles?: boolean;
 }
 
 /**
  * Живой предпросмотр 16:9: субтитры появляются и подсвечиваются по фейковому
- * таймлайну, фоновое слайдшоу двигается включёнными эффектами и растворяется
- * на границах «картинок» — та же математика, что в движке, но на CSS.
- * Кадр считается равным 1920×1080, размеры переводятся в cqw.
+ * таймлайну, фоновое слайдшоу двигается включёнными эффектами и сменяется
+ * выбранным типом перехода на границах «картинок» — та же математика, что в
+ * движке, но на CSS. Кадр считается равным 1920×1080, размеры — в cqw.
  */
-export function LivePreview({ style, slideshow, withSubtitles = true }: LivePreviewProps) {
-  // Два слоя фона: чётные картинки на одном, нечётные на другом — во время
-  // кроссфейда верхний (следующий) проявляется поверх текущего.
+export function LivePreview({
+  style,
+  slideshow,
+  transitionType = "none",
+  withSubtitles = true,
+}: LivePreviewProps) {
+  // Два слоя фона: чётные картинки на одном, нечётные на другом. У каждого
+  // слоя внешняя обёртка: маска перехода (clip-path), сдвиг наезда и
+  // прозрачность живут на ней — они должны резать кадр по экрану, а не
+  // вращаться с картинкой, поэтому transform движения — на внутреннем div.
   const layerRefs = [useRef<HTMLDivElement | null>(null), useRef<HTMLDivElement | null>(null)];
+  const wrapRefs = [useRef<HTMLDivElement | null>(null), useRef<HTMLDivElement | null>(null)];
+  const fadeColorRef = useRef<HTMLDivElement | null>(null);
   const grainRef = useRef<HTMLDivElement | null>(null);
   const [activeWord, setActiveWord] = useState(0);
   const [bgUrl, setBgUrl] = useState<string | null>(null);
@@ -115,6 +126,7 @@ export function LivePreview({ style, slideshow, withSubtitles = true }: LivePrev
   const epochRef = useRef(performance.now());
   const offsetRef = useRef(0);
   const lastFadeRef = useRef<number | null>(null);
+  const lastTypeRef = useRef<TransitionType | null>(null);
 
   // Своя картинка: путь в localStorage, содержимое перечитывается через main;
   // выбор в одном экземпляре превью разлетается в остальные через CustomEvent.
@@ -183,14 +195,17 @@ export function LivePreview({ style, slideshow, withSubtitles = true }: LivePrev
     const origin =
       pend?.pivot === "top" ? "50% 0%" : pend?.pivot === "bottom" ? "50% 100%" : "50% 50%";
 
-    // Сменили длительность перехода — перемотать к началу растворения,
+    // Сменили длительность или тип перехода — перемотать к началу перехода,
     // чтобы новое значение было видно сразу, а не через полцикла.
-    if (lastFadeRef.current !== null && lastFadeRef.current !== fade) {
+    const fadeChanged = lastFadeRef.current !== null && lastFadeRef.current !== fade;
+    const typeChanged = lastTypeRef.current !== null && lastTypeRef.current !== transitionType;
+    if (fadeChanged || typeChanged) {
       const now = (performance.now() - epochRef.current) / 1000 + offsetRef.current;
       const local = now - Math.floor(now / PER_IMAGE_SEC) * PER_IMAGE_SEC;
       offsetRef.current += Math.max(0, PER_IMAGE_SEC - fade - 0.35) - local;
     }
     lastFadeRef.current = fade;
+    lastTypeRef.current = transitionType;
 
     /** Трансформация картинки idx в момент tLife от начала её появления. */
     const transformFor = (
@@ -230,16 +245,22 @@ export function LivePreview({ style, slideshow, withSubtitles = true }: LivePrev
       );
     };
 
+    interface LayerLook {
+      opacity: number;
+      onTop: boolean;
+      clip: string;
+      slideX: number;
+    }
     const assigned: [number, number] = [-1, -1];
     const applyLayer = (
       idx: number,
       tLife: number,
-      opacity: number,
-      onTop: boolean,
+      look: LayerLook,
       sh: [number, number, number],
     ): void => {
+      const wrap = wrapRefs[idx % 2]!.current;
       const el = layerRefs[idx % 2]!.current;
-      if (!el) return;
+      if (!wrap || !el) return;
       const variant = variants[idx % variants.length]!;
       if (assigned[idx % 2] !== idx) {
         assigned[idx % 2] = idx;
@@ -248,8 +269,10 @@ export function LivePreview({ style, slideshow, withSubtitles = true }: LivePrev
       }
       el.style.transformOrigin = origin;
       el.style.transform = transformFor(idx, tLife, variant, sh);
-      el.style.opacity = opacity.toFixed(3);
-      el.style.zIndex = onTop ? "1" : "0";
+      wrap.style.opacity = look.opacity.toFixed(3);
+      wrap.style.zIndex = look.onTop ? "1" : "0";
+      wrap.style.clipPath = look.clip;
+      wrap.style.transform = look.slideX !== 0 ? `translateX(${look.slideX.toFixed(2)}%)` : "none";
     };
 
     const cycleSec = SAMPLE_WORDS.length * WORD_SEC + TAIL_SEC;
@@ -268,10 +291,50 @@ export function LivePreview({ style, slideshow, withSubtitles = true }: LivePrev
 
       const idx = Math.floor(t / PER_IMAGE_SEC);
       const tLocal = t - idx * PER_IMAGE_SEC;
-      // Линейная маска растворения — как geq-маска движка.
-      const fadeP = fade > 0 ? Math.min(1, Math.max(0, (tLocal - (PER_IMAGE_SEC - fade)) / fade)) : 0;
-      applyLayer(idx, tLocal + fade, 1, false, sh);
-      applyLayer(idx + 1, tLocal - (PER_IMAGE_SEC - fade), fadeP, true, sh);
+      // Прогресс перехода 0..1 — как ld(2) в geq-маске движка.
+      const p = fade > 0 ? Math.min(1, Math.max(0, (tLocal - (PER_IMAGE_SEC - fade)) / fade)) : 0;
+      // Как выбранный тип перехода проявляет следующий слой поверх текущего.
+      const bottom: LayerLook = { opacity: 1, onTop: false, clip: "none", slideX: 0 };
+      const top: LayerLook = { opacity: p > 0 ? 1 : 0, onTop: true, clip: "none", slideX: 0 };
+      let fadeColor = 0;
+      switch (transitionType) {
+        case "wipeleft":
+          top.clip = `inset(0 0 0 ${((1 - p) * 100).toFixed(2)}%)`;
+          break;
+        case "wiperight":
+          top.clip = `inset(0 ${((1 - p) * 100).toFixed(2)}% 0 0)`;
+          break;
+        case "circleopen":
+          top.clip = `circle(${(p * 75).toFixed(2)}% at 50% 50%)`;
+          break;
+        case "circleclose":
+          // Обратный круг clip-path не умеет: старый слой кладётся сверху и
+          // сжимается кругом, новый под ним просто целиком непрозрачен.
+          bottom.onTop = p > 0;
+          top.onTop = false;
+          if (p > 0) bottom.clip = `circle(${((1 - p) * 75).toFixed(2)}% at 50% 50%)`;
+          break;
+        case "slideleft":
+          top.slideX = (1 - p) * 100;
+          break;
+        case "slideright":
+          top.slideX = -(1 - p) * 100;
+          break;
+        case "fadeblack":
+        case "fadewhite":
+          // Подмена картинки под полной заливкой — как шаг альфы + дип в движке.
+          top.opacity = p >= 0.5 ? 1 : 0;
+          fadeColor = Math.min(1, (1 - Math.abs(2 * p - 1)) * 1.4);
+          break;
+        default:
+          // none/fade/dissolve: равномерное растворение (зерно дизолва движок
+          // делает по-настоящему, в CSS хватает плавной альфы).
+          top.opacity = p;
+          break;
+      }
+      applyLayer(idx, tLocal + fade, bottom, sh);
+      applyLayer(idx + 1, tLocal - (PER_IMAGE_SEC - fade), top, sh);
+      if (fadeColorRef.current) fadeColorRef.current.style.opacity = fadeColor.toFixed(3);
 
       if (grainRef.current && ss.grain.enabled) {
         grainRef.current.style.backgroundPosition = `${Math.floor(Math.random() * 140)}px ${Math.floor(Math.random() * 140)}px`;
@@ -284,7 +347,7 @@ export function LivePreview({ style, slideshow, withSubtitles = true }: LivePrev
     };
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
-  }, [slideshow, bgUrl]);
+  }, [slideshow, transitionType, bgUrl]);
 
   const align =
     style.position === "bottom" ? "flex-end" : style.position === "top" ? "flex-start" : "center";
@@ -301,12 +364,19 @@ export function LivePreview({ style, slideshow, withSubtitles = true }: LivePrev
       className="group relative flex aspect-video w-full overflow-hidden rounded-md border border-border bg-black"
       style={{ containerType: "inline-size", alignItems: align, justifyContent: "center" }}
     >
-      <div ref={layerRefs[0]} className="absolute inset-0" style={{ willChange: "transform" }} />
-      <div
-        ref={layerRefs[1]}
-        className="absolute inset-0"
-        style={{ willChange: "transform", opacity: 0 }}
-      />
+      <div ref={wrapRefs[0]} className="absolute inset-0">
+        <div ref={layerRefs[0]} className="absolute inset-0" style={{ willChange: "transform" }} />
+      </div>
+      <div ref={wrapRefs[1]} className="absolute inset-0" style={{ opacity: 0 }}>
+        <div ref={layerRefs[1]} className="absolute inset-0" style={{ willChange: "transform" }} />
+      </div>
+      {(transitionType === "fadeblack" || transitionType === "fadewhite") && (
+        <div
+          ref={fadeColorRef}
+          className="pointer-events-none absolute inset-0 z-[2]"
+          style={{ background: transitionType === "fadeblack" ? "#000" : "#fff", opacity: 0 }}
+        />
+      )}
       {slideshow.vignette.enabled && (
         <div
           className="pointer-events-none absolute inset-0 z-[2]"
