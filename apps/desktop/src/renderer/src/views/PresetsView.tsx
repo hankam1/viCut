@@ -11,10 +11,10 @@ import {
   type OutputParamsValue,
 } from "../components/OutputParams.js";
 import { TextStylePresets } from "../components/TextStylePresets.js";
+import { LivePreview } from "../components/LivePreview.js";
 import { Section } from "../components/Section.js";
 import { Segmented } from "../components/Segmented.js";
 import { Slider } from "../components/Slider.js";
-import { SubtitlePreview } from "../components/SubtitlePreview.js";
 import { Toggle } from "../components/Toggle.js";
 import { useToast } from "../components/toast.js";
 
@@ -48,6 +48,34 @@ function uniqueName(base: string, taken: Set<string>): string {
   let candidate = `${base}-copy`;
   for (let i = 2; taken.has(candidate); i++) candidate = `${base}-copy-${i}`;
   return candidate;
+}
+
+/** Строка эффекта слайдшоу: тумблер + название; настройки раскрываются при включении. */
+function EffectRow({
+  title,
+  hint,
+  checked,
+  onChange,
+  children,
+}: {
+  title: string;
+  hint: string;
+  checked: boolean;
+  onChange: (checked: boolean) => void;
+  children?: React.ReactNode;
+}) {
+  return (
+    <div className="rounded-md border border-border bg-surface-2">
+      <label className="flex h-9 cursor-pointer items-center gap-2.5 px-3" title={hint}>
+        <Toggle label={title} checked={checked} onChange={onChange} />
+        <span className="shrink-0 text-[12.5px]">{title}</span>
+        <span className="min-w-0 flex-1 truncate text-right text-[11px] text-faint">{hint}</span>
+      </label>
+      {checked && children && (
+        <div className="flex flex-col gap-2.5 border-t border-border px-3 py-2.5">{children}</div>
+      )}
+    </div>
+  );
 }
 
 /** Подзаголовок внутри секции — визуально группирует связанные настройки. */
@@ -179,6 +207,11 @@ export function PresetsView() {
         style: { ...current.subtitles.style, ...patch },
       },
     });
+  };
+
+  const updateSlideshow = (patch: Partial<Preset["slideshow"]>): void => {
+    if (!current) return;
+    update({ slideshow: { ...current.slideshow, ...patch } });
   };
 
   const outputParams = current ? paramsFromPreset(current) : null;
@@ -498,7 +531,7 @@ export function PresetsView() {
                     Появление — слова возникают по мере произнесения; подсветка — активное слово
                     выделяется цветом.
                   </div>
-                  <SubtitlePreview style={current.subtitles.style} />
+                  <LivePreview style={current.subtitles.style} slideshow={current.slideshow} />
                   <SubGroup label="Вывод" />
                   <div className="flex items-center gap-6">
                     <label
@@ -574,39 +607,8 @@ export function PresetsView() {
                 </div>
               </Section>
 
-              <Section
-                title="Слайдшоу"
-                aside={
-                  <Toggle
-                    label="Ken Burns"
-                    checked={current.slideshow.kenBurns}
-                    onChange={(kenBurns) =>
-                      update({ slideshow: { ...current.slideshow, kenBurns } })
-                    }
-                  />
-                }
-              >
+              <Section title="Слайдшоу">
                 <div className="flex flex-col gap-3">
-                  <Slider
-                    label="Сила зума"
-                    value={current.slideshow.zoom}
-                    min={1.05}
-                    max={1.6}
-                    step={0.05}
-                    neutral={1.15}
-                    format={(v) => `×${v.toFixed(2)}`}
-                    onChange={(zoom) => update({ slideshow: { ...current.slideshow, zoom } })}
-                  />
-                  <Slider
-                    label="Скорость зума"
-                    value={current.slideshow.speed}
-                    min={0.25}
-                    max={3}
-                    step={0.25}
-                    neutral={1}
-                    format={(v) => `×${v.toFixed(2)}`}
-                    onChange={(speed) => update({ slideshow: { ...current.slideshow, speed } })}
-                  />
                   <Slider
                     label="Переход"
                     value={current.slideshow.crossfadeSec}
@@ -615,14 +617,215 @@ export function PresetsView() {
                     step={0.1}
                     neutral={0.5}
                     format={(v) => (v === 0 ? "выкл" : `${v.toFixed(1)}с`)}
-                    onChange={(crossfadeSec) =>
-                      update({ slideshow: { ...current.slideshow, crossfadeSec } })
-                    }
+                    onChange={(crossfadeSec) => updateSlideshow({ crossfadeSec })}
                   />
                   <div className="pl-[124px] text-[11.5px] text-faint">
-                    Медленный зум на картинках в режиме «Сборка под аудио»: чётные картинки
-                    приближаются, нечётные — отдаляются. Переход — плавное растворение между
-                    соседними картинками.
+                    Плавное растворение между соседними картинками в режиме «Сборка под аудио».
+                  </div>
+                  <SubGroup label="Эффекты картинок" />
+                  <EffectRow
+                    title="Зум (Ken Burns)"
+                    hint="медленное приближение и отдаление"
+                    checked={current.slideshow.kenBurns}
+                    onChange={(kenBurns) => updateSlideshow({ kenBurns })}
+                  >
+                    <Slider
+                      label="Сила"
+                      value={current.slideshow.zoom}
+                      min={1.05}
+                      max={1.6}
+                      step={0.05}
+                      neutral={1.15}
+                      format={(v) => `×${v.toFixed(2)}`}
+                      onChange={(zoom) => updateSlideshow({ zoom })}
+                    />
+                    <Slider
+                      label="Скорость"
+                      value={current.slideshow.speed}
+                      min={0.25}
+                      max={3}
+                      step={0.25}
+                      neutral={1}
+                      format={(v) => `×${v.toFixed(2)}`}
+                      onChange={(speed) => updateSlideshow({ speed })}
+                    />
+                  </EffectRow>
+                  <EffectRow
+                    title="Маятник"
+                    hint="кадр плавно качается, как на качелях"
+                    checked={current.slideshow.pendulum.enabled}
+                    onChange={(enabled) =>
+                      updateSlideshow({ pendulum: { ...current.slideshow.pendulum, enabled } })
+                    }
+                  >
+                    <Slider
+                      label="Угол"
+                      value={current.slideshow.pendulum.angleDeg}
+                      min={0.5}
+                      max={12}
+                      step={0.5}
+                      neutral={3}
+                      format={(v) => `${v.toFixed(1)}°`}
+                      onChange={(angleDeg) =>
+                        updateSlideshow({ pendulum: { ...current.slideshow.pendulum, angleDeg } })
+                      }
+                    />
+                    <Slider
+                      label="Период"
+                      value={current.slideshow.pendulum.periodSec}
+                      min={1}
+                      max={20}
+                      step={0.5}
+                      neutral={6}
+                      format={(v) => `${v.toFixed(1)}с`}
+                      onChange={(periodSec) =>
+                        updateSlideshow({ pendulum: { ...current.slideshow.pendulum, periodSec } })
+                      }
+                    />
+                    <div className="flex items-center gap-3">
+                      <span className="w-28 shrink-0 text-[12px] text-muted">Точка опоры</span>
+                      <Segmented
+                        options={[
+                          { value: "center" as const, label: "Центр" },
+                          { value: "top" as const, label: "Верх" },
+                          { value: "bottom" as const, label: "Низ" },
+                        ]}
+                        value={current.slideshow.pendulum.pivot}
+                        onChange={(pivot) =>
+                          updateSlideshow({ pendulum: { ...current.slideshow.pendulum, pivot } })
+                        }
+                      />
+                    </div>
+                    <label className="flex items-center gap-2 text-[12px] text-muted">
+                      <Toggle
+                        label="Чередовать направление"
+                        checked={current.slideshow.pendulum.alternate}
+                        onChange={(alternate) =>
+                          updateSlideshow({ pendulum: { ...current.slideshow.pendulum, alternate } })
+                        }
+                      />
+                      Чередовать направление по картинкам
+                    </label>
+                  </EffectRow>
+                  <EffectRow
+                    title="Панорама"
+                    hint="медленный сдвиг кадра в сторону"
+                    checked={current.slideshow.pan.enabled}
+                    onChange={(enabled) =>
+                      updateSlideshow({ pan: { ...current.slideshow.pan, enabled } })
+                    }
+                  >
+                    <Slider
+                      label="Сила"
+                      value={current.slideshow.pan.amount}
+                      min={0.02}
+                      max={0.3}
+                      step={0.01}
+                      neutral={0.08}
+                      format={(v) => `${Math.round(v * 100)}%`}
+                      onChange={(amount) =>
+                        updateSlideshow({ pan: { ...current.slideshow.pan, amount } })
+                      }
+                    />
+                    <div className="flex items-center gap-3">
+                      <span className="w-28 shrink-0 text-[12px] text-muted">Ось</span>
+                      <Segmented
+                        options={[
+                          { value: "horizontal" as const, label: "Горизонталь" },
+                          { value: "vertical" as const, label: "Вертикаль" },
+                          { value: "alternate" as const, label: "Чередовать" },
+                        ]}
+                        value={current.slideshow.pan.axis}
+                        onChange={(axis) =>
+                          updateSlideshow({ pan: { ...current.slideshow.pan, axis } })
+                        }
+                      />
+                    </div>
+                  </EffectRow>
+                  <EffectRow
+                    title="Дрожание камеры"
+                    hint="едва заметная «съёмка с рук»"
+                    checked={current.slideshow.shake.enabled}
+                    onChange={(enabled) =>
+                      updateSlideshow({ shake: { ...current.slideshow.shake, enabled } })
+                    }
+                  >
+                    <Slider
+                      label="Интенсивность"
+                      value={current.slideshow.shake.intensity}
+                      min={0.2}
+                      max={3}
+                      step={0.1}
+                      neutral={1}
+                      format={(v) => `×${v.toFixed(1)}`}
+                      onChange={(intensity) =>
+                        updateSlideshow({ shake: { ...current.slideshow.shake, intensity } })
+                      }
+                    />
+                    <Slider
+                      label="Темп"
+                      value={current.slideshow.shake.speed}
+                      min={0.25}
+                      max={3}
+                      step={0.25}
+                      neutral={1}
+                      format={(v) => `×${v.toFixed(2)}`}
+                      onChange={(speed) =>
+                        updateSlideshow({ shake: { ...current.slideshow.shake, speed } })
+                      }
+                    />
+                  </EffectRow>
+                  <EffectRow
+                    title="Виньетка"
+                    hint="затемнение краёв кадра"
+                    checked={current.slideshow.vignette.enabled}
+                    onChange={(enabled) =>
+                      updateSlideshow({ vignette: { ...current.slideshow.vignette, enabled } })
+                    }
+                  >
+                    <Slider
+                      label="Сила"
+                      value={current.slideshow.vignette.strength}
+                      min={0.1}
+                      max={1}
+                      step={0.05}
+                      neutral={0.4}
+                      format={(v) => `${Math.round(v * 100)}%`}
+                      onChange={(strength) =>
+                        updateSlideshow({ vignette: { ...current.slideshow.vignette, strength } })
+                      }
+                    />
+                  </EffectRow>
+                  <EffectRow
+                    title="Зерно плёнки"
+                    hint="лёгкий киношный шум"
+                    checked={current.slideshow.grain.enabled}
+                    onChange={(enabled) =>
+                      updateSlideshow({ grain: { ...current.slideshow.grain, enabled } })
+                    }
+                  >
+                    <Slider
+                      label="Сила"
+                      value={current.slideshow.grain.strength}
+                      min={1}
+                      max={30}
+                      step={1}
+                      neutral={8}
+                      format={(v) => String(Math.round(v))}
+                      onChange={(strength) =>
+                        updateSlideshow({ grain: { ...current.slideshow.grain, strength } })
+                      }
+                    />
+                  </EffectRow>
+                  <LivePreview
+                    style={current.subtitles.style}
+                    slideshow={current.slideshow}
+                    withSubtitles={false}
+                  />
+                  <div className="text-[11.5px] text-faint">
+                    Эффекты применяются к картинкам истории в «Сборке под аудио» и свободно
+                    сочетаются друг с другом. Превью примерное: наведи курсор на кадр, чтобы
+                    подставить свою картинку.
                   </div>
                 </div>
               </Section>

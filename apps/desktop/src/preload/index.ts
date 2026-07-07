@@ -141,6 +141,14 @@ const api = {
     pickVisuals: (): Promise<string[]> => ipcRenderer.invoke("dialog:pick-visuals"),
     pickFolder: (): Promise<string | null> => ipcRenderer.invoke("dialog:pick-folder"),
   },
+  preview: {
+    /** Выбрать картинку для живого превью пресетов; вернёт ужатый data URL. */
+    pickImage: (): Promise<{ path: string; dataUrl: string } | null> =>
+      ipcRenderer.invoke("dialog:pick-preview-image"),
+    /** Перечитать сохранённую картинку превью по пути (null — файла больше нет). */
+    loadImage: (path: string): Promise<string | null> =>
+      ipcRenderer.invoke("preview:load-image", path),
+  },
   shell: {
     showItem: (path: string): Promise<void> => ipcRenderer.invoke("shell:show-item", path),
     openPath: (path: string): Promise<void> => ipcRenderer.invoke("shell:open-path", path),

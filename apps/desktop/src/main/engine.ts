@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import fsp from "node:fs/promises";
 import path from "node:path";
-import { BrowserWindow, dialog, ipcMain, shell } from "electron";
+import { BrowserWindow, dialog, ipcMain, nativeImage, shell } from "electron";
 import {
   applyOutputOverrides,
   builtinPreset,
@@ -352,6 +352,33 @@ export function registerEngineIpc(): void {
     const result = await dialog.showOpenDialog(win, { properties: ["openDirectory"] });
     return result.canceled ? null : (result.filePaths[0] ?? null);
   });
+  // Картинка живого превью пресетов: рендерер не читает файлы сам, поэтому
+  // main отдаёт data URL, ужатый до ~960px — хватает для превью любого размера.
+  const previewImageDataUrl = (filePath: string): string | null => {
+    try {
+      let img = nativeImage.createFromPath(filePath);
+      if (img.isEmpty()) return null;
+      if (img.getSize().width > 960) img = img.resize({ width: 960 });
+      return img.toDataURL();
+    } catch {
+      return null;
+    }
+  };
+  ipcMain.handle("dialog:pick-preview-image", async (event) => {
+    const win = BrowserWindow.fromWebContents(event.sender);
+    if (!win) return null;
+    const result = await dialog.showOpenDialog(win, {
+      properties: ["openFile"],
+      filters: [{ name: "Картинки", extensions: ["jpg", "jpeg", "png", "webp", "bmp", "gif"] }],
+    });
+    const filePath = result.canceled ? undefined : result.filePaths[0];
+    if (!filePath) return null;
+    const dataUrl = previewImageDataUrl(filePath);
+    return dataUrl ? { path: filePath, dataUrl } : null;
+  });
+  ipcMain.handle("preview:load-image", (_event, filePath: string) =>
+    previewImageDataUrl(filePath),
+  );
   ipcMain.handle("shell:show-item", (_event, itemPath: string) => shell.showItemInFolder(itemPath));
   ipcMain.handle("shell:open-path", (_event, itemPath: string) => shell.openPath(itemPath));
 }
