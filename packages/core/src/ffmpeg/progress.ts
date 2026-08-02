@@ -1,4 +1,6 @@
 import { spawn } from "node:child_process";
+import { CancelError } from "../proc/cancel.js";
+import { killOnAbort, trackChild } from "../proc/children.js";
 import { ProcessError } from "./run.js";
 
 export interface EncodeProgress {
@@ -13,6 +15,8 @@ export interface EncodeProgress {
 export interface FfmpegRunOptions {
   totalDurationSec?: number;
   onProgress?: (progress: EncodeProgress) => void;
+  /** Отмена: ffmpeg убивается, промис падает с CancelError. */
+  signal?: AbortSignal;
 }
 
 /**
@@ -34,7 +38,13 @@ export function runFfmpeg(
   ];
 
   return new Promise((resolve, reject) => {
+    if (options?.signal?.aborted) {
+      reject(new CancelError());
+      return;
+    }
     const child = spawn(ffmpegPath, fullArgs, { windowsHide: true });
+    trackChild(child);
+    const stopAbort = killOnAbort(child, options?.signal);
     let stderr = "";
     let buffer = "";
     const current: Record<string, string> = {};
@@ -68,9 +78,15 @@ export function runFfmpeg(
     });
 
     child.stderr.on("data", (chunk: Buffer) => (stderr += chunk));
-    child.on("error", reject);
+    child.on("error", (error) => {
+      stopAbort();
+      reject(options?.signal?.aborted ? new CancelError() : error);
+    });
     child.on("close", (code) => {
-      if (code === 0) resolve({ stderr });
+      stopAbort();
+      // Ненулевой код после kill — это отмена, а не сбой кодирования.
+      if (options?.signal?.aborted) reject(new CancelError());
+      else if (code === 0) resolve({ stderr });
       else reject(new ProcessError(ffmpegPath, code ?? -1, stderr));
     });
   });

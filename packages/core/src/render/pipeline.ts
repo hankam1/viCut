@@ -5,6 +5,7 @@ import type { Tools } from "../ffmpeg/ensure.js";
 import { runFfmpeg } from "../ffmpeg/progress.js";
 import { dataDir } from "../platform/paths.js";
 import type { Preset } from "../preset/schema.js";
+import { throwIfAborted } from "../proc/cancel.js";
 import { probe } from "../probe/probe.js";
 import type { MediaInfo } from "../probe/types.js";
 import { segmentsToAss } from "../subtitles/ass.js";
@@ -57,6 +58,11 @@ export interface RenderResult {
 export interface RenderOptions {
   tools: Tools;
   onProgress?: (event: RenderProgressEvent) => void;
+  /**
+   * Отмена задачи: убивает текущий ffmpeg/whisper и валит рендер CancelError.
+   * Один сигнал живёт от подготовки до конца кодирования одной задачи.
+   */
+  signal?: AbortSignal;
 }
 
 function loudnormNumber(raw: string | undefined, key: string): number {
@@ -121,8 +127,9 @@ async function assertVideoDuration(
   ffprobePath: string,
   expectedSec: number,
   label: string,
+  signal?: AbortSignal,
 ): Promise<void> {
-  const info = await probe(filePath, ffprobePath);
+  const info = await probe(filePath, ffprobePath, signal);
   const actual = info.video?.durationSec ?? info.durationSec ?? 0;
   const tolerance = Math.max(0.5, Math.min(2, expectedSec * 0.05));
   if (expectedSec - actual > tolerance) {
@@ -180,7 +187,8 @@ export async function prepareRender(
   try {
     // ── Анализ исходников ──
     emit("probe", null);
-    const doProbe = (file: string): Promise<MediaInfo> => probe(file, options.tools.ffprobe.path);
+    const doProbe = (file: string): Promise<MediaInfo> =>
+      probe(file, options.tools.ffprobe.path, options.signal);
 
     let stitchInfos: MediaInfo[] = [];
     let sectionInfos: ProbedSection[] = [];
@@ -204,11 +212,15 @@ export async function prepareRender(
       for (const [si, section] of sectionInfos.entries()) {
         emit("probe", null, `подготовка аудио ${si + 1}/${sectionInfos.length}`);
         const clean = path.join(tmpDir, `audio-${si}.wav`);
-        await runFfmpeg(options.tools.ffmpeg.path, [
-          "-y", "-i", section.audio.path,
-          "-vn", "-ar", "48000", "-ac", "2", "-c:a", "pcm_s16le",
-          clean,
-        ]);
+        await runFfmpeg(
+          options.tools.ffmpeg.path,
+          [
+            "-y", "-i", section.audio.path,
+            "-vn", "-ar", "48000", "-ac", "2", "-c:a", "pcm_s16le",
+            clean,
+          ],
+          { signal: options.signal },
+        );
         sectionInfos[si] = { ...section, audio: await doProbe(clean) };
       }
     }
@@ -246,6 +258,7 @@ export async function prepareRender(
       const { stderr } = await runFfmpeg(options.tools.ffmpeg.path, args, {
         totalDurationSec: graph.totalDurationSec,
         onProgress: (p) => emit("prepare-audio", p.percent),
+        signal: options.signal,
       });
       if (preset.audio.normalize) measured = parseLoudnorm(stderr);
       prepassDurationSec = graph.totalDurationSec;
@@ -269,6 +282,7 @@ export async function prepareRender(
         maxSegmentChars: style.maxLineChars * style.maxLines,
         tools: options.tools,
         onProgress: (p) => emit("transcribe", p.percent, p.detail ?? p.phase),
+        signal: options.signal,
       });
 
       if (transcript.segments.length === 0) {
@@ -327,6 +341,7 @@ export async function encodeRender(
   ): void => options.onProgress?.({ stage, percent, detail, etaSec });
 
   try {
+    throwIfAborted(options.signal);
     const encoder = await selectEncoder(
       options.tools.ffmpeg.path,
       preset.output.videoCodec,
@@ -351,6 +366,7 @@ export async function encodeRender(
           ffprobePath: options.tools.ffprobe.path,
           encoderArgs: encoder.args,
           onProgress: (detail) => emit("encode", 0, `секция ${si + 1} · ${detail}`),
+          signal: options.signal,
         });
         if (stitched) section.visuals = { kind: "clips", infos: [stitched] };
       }
@@ -391,12 +407,14 @@ export async function encodeRender(
           p.speed ? `${encoder.name} · ${p.speed.toFixed(1)}x` : encoder.name,
           p.speed ? Math.max(0, (graph.totalDurationSec - p.outTimeSec) / p.speed) : null,
         ),
+      signal: options.signal,
     });
     await assertVideoDuration(
       request.output,
       options.tools.ffprobe.path,
       graph.totalDurationSec,
       "итоговый файл",
+      options.signal,
     );
 
     return {
@@ -468,6 +486,7 @@ async function encodeSections(
     const base = doneDur;
     await runFfmpeg(options.tools.ffmpeg.path, args, {
       totalDurationSec: graph.totalDurationSec,
+      signal: options.signal,
       onProgress: (p) =>
         emit(
           "encode",
@@ -483,6 +502,7 @@ async function encodeSections(
       options.tools.ffprobe.path,
       secDur,
       `секция ${si + 1}`,
+      options.signal,
     );
     parts.push(partPath);
     doneDur += secDur;
@@ -499,9 +519,19 @@ async function encodeSections(
   await runFfmpeg(
     options.tools.ffmpeg.path,
     ["-y", "-f", "concat", "-safe", "0", "-i", listPath, "-c", "copy", "-movflags", "+faststart", request.output],
-    { totalDurationSec: totalDur, onProgress: () => emit("encode", 99.5, "склейка") },
+    {
+      totalDurationSec: totalDur,
+      onProgress: () => emit("encode", 99.5, "склейка"),
+      signal: options.signal,
+    },
   );
-  await assertVideoDuration(request.output, options.tools.ffprobe.path, totalDur, "итоговый файл");
+  await assertVideoDuration(
+    request.output,
+    options.tools.ffprobe.path,
+    totalDur,
+    "итоговый файл",
+    options.signal,
+  );
 
   return {
     output: request.output,

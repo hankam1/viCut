@@ -65,19 +65,27 @@ function toAudioInfo(stream: RawStream): AudioStreamInfo {
 }
 
 /** Inspect a media file with ffprobe and return its key properties. */
-export async function probe(filePath: string, ffprobePath?: string): Promise<MediaInfo> {
+export async function probe(
+  filePath: string,
+  ffprobePath?: string,
+  signal?: AbortSignal,
+): Promise<MediaInfo> {
   const ffprobe = ffprobePath ?? (await locateFfprobe())?.path;
   if (!ffprobe) {
     throw new Error("ffprobe not found. Run `vicut setup` to download FFmpeg first.");
   }
 
-  const { stdout } = await run(ffprobe, [
-    "-v", "error",
-    "-print_format", "json",
-    "-show_format",
-    "-show_streams",
-    filePath,
-  ]);
+  const { stdout } = await run(
+    ffprobe,
+    [
+      "-v", "error",
+      "-print_format", "json",
+      "-show_format",
+      "-show_streams",
+      filePath,
+    ],
+    { signal },
+  );
 
   const raw = JSON.parse(stdout) as { format?: RawFormat; streams?: RawStream[] };
   const format = raw.format ?? {};

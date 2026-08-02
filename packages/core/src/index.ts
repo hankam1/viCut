@@ -1,5 +1,7 @@
 export { dataDir, binDir } from "./platform/paths.js";
 export { run, ProcessError, type RunResult } from "./ffmpeg/run.js";
+export { CancelError, isCancel, throwIfAborted } from "./proc/cancel.js";
+export { killAllChildren, liveChildCount } from "./proc/children.js";
 export {
   locateTool,
   locateFfmpeg,

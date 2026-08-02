@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { Command } from "commander";
 import pc from "picocolors";
+import { killAllChildren } from "@vicut/core";
 import { registerAssemble } from "./commands/assemble.js";
 import { registerConfig } from "./commands/config.js";
 import { registerPreset } from "./commands/preset.js";
@@ -9,6 +10,15 @@ import { registerQueue } from "./commands/queue.js";
 import { registerRender } from "./commands/render.js";
 import { registerSetup } from "./commands/setup.js";
 import { registerTranscribe } from "./commands/transcribe.js";
+
+// Ctrl+C не должен оставлять ffmpeg/whisper доживать своё уже без нас.
+for (const signal of ["SIGINT", "SIGTERM"] as const) {
+  process.on(signal, () => {
+    const killed = killAllChildren();
+    if (killed > 0) console.error(pc.dim(`\nstopped ${killed} running process(es)`));
+    process.exit(130);
+  });
+}
 
 const program = new Command();
 

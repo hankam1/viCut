@@ -64,6 +64,18 @@ export function JobCard({
     : 0;
   const etaSec = live?.etaSec;
 
+  // Отмена запущенной задачи убивает рендер и стирает недописанный файл, так
+  // что случайный клик стоит дорого — спрашиваем подтверждение прямо в кнопке.
+  const [confirmCancel, setConfirmCancel] = useState(false);
+  useEffect(() => {
+    if (!confirmCancel) return;
+    const timer = setTimeout(() => setConfirmCancel(false), 4000);
+    return () => clearTimeout(timer);
+  }, [confirmCancel]);
+  useEffect(() => {
+    if (!running) setConfirmCancel(false);
+  }, [running]);
+
   // Тикающее «идёт N» у running-задачи; у готовой — статичное «за N».
   const [nowMs, setNowMs] = useState(() => Date.now());
   useEffect(() => {
@@ -114,7 +126,26 @@ export function JobCard({
             </>
           )}
           {running && (
-            <span className="tnum text-[13px] font-medium text-accent">{Math.floor(percent)}%</span>
+            <>
+              <span className="tnum text-[13px] font-medium text-accent">
+                {Math.floor(percent)}%
+              </span>
+              {confirmCancel ? (
+                <Button
+                  variant="danger"
+                  onClick={() => {
+                    setConfirmCancel(false);
+                    onCancel(job.id);
+                  }}
+                >
+                  <X size={14} strokeWidth={1.5} /> Точно отменить?
+                </Button>
+              ) : (
+                <Button variant="ghost" onClick={() => setConfirmCancel(true)}>
+                  <X size={14} strokeWidth={1.5} /> Отменить
+                </Button>
+              )}
+            </>
           )}
           {job.status === "done" && (
             <>

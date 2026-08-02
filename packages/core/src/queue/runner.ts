@@ -1,4 +1,6 @@
+import fsp from "node:fs/promises";
 import type { Tools } from "../ffmpeg/ensure.js";
+import { isCancel } from "../proc/cancel.js";
 import {
   encodeRender,
   prepareRender,
@@ -13,13 +15,22 @@ export interface QueueRunEvents {
   onJobProgress?: (job: QueueJob, event: RenderProgressEvent) => void;
   onJobDone?: (job: QueueJob, result: RenderResult) => void;
   onJobFailed?: (job: QueueJob, error: Error) => void;
+  /** Задачу прервал пользователь — процессы уже убиты, файл не дописан. */
+  onJobCanceled?: (job: QueueJob) => void;
   /** Возвращает true, когда после текущей задачи нужно остановиться. */
   shouldPause?: () => boolean;
+  /**
+   * Сигнал отмены конкретной задачи. Один и тот же сигнал должен возвращаться
+   * для одного id на всём её пути (заблаговременная подготовка → кодирование),
+   * иначе отмена во время подготовки не дойдёт до кодирования.
+   */
+  signalFor?: (job: QueueJob) => AbortSignal | undefined;
 }
 
 export interface QueueRunSummary {
   done: number;
   failed: number;
+  canceled: number;
 }
 
 interface Pretranscribed {
@@ -39,7 +50,7 @@ export async function runQueue(
   events?: QueueRunEvents,
 ): Promise<QueueRunSummary> {
   store.resetInterrupted();
-  const summary: QueueRunSummary = { done: 0, failed: 0 };
+  const summary: QueueRunSummary = { done: 0, failed: 0, canceled: 0 };
 
   const requestOf = (job: QueueJob) => ({ spec: job.spec, output: job.output, preset: job.preset });
 
@@ -55,7 +66,16 @@ export async function runQueue(
     };
   };
 
-  const failJob = (job: QueueJob, error: unknown): void => {
+  /** Завершить упавшую задачу: отмена или настоящая ошибка. */
+  const endJob = async (job: QueueJob, error: unknown, signal?: AbortSignal): Promise<void> => {
+    if (signal?.aborted || isCancel(error)) {
+      store.markCanceled(job.id);
+      summary.canceled++;
+      // Недописанный ffmpeg-ом файл невозможно посмотреть — не оставляем мусор.
+      await fsp.rm(job.output, { force: true }).catch(() => {});
+      events?.onJobCanceled?.(job);
+      return;
+    }
     const message = error instanceof Error ? error.message : String(error);
     store.markFailed(job.id, message);
     summary.failed++;
@@ -84,29 +104,36 @@ export async function runQueue(
     job ??= store.nextPending();
     if (!job) break;
 
+    const signal = events?.signalFor?.(job);
     store.markRunning(job.id);
     events?.onJobStart?.(job);
     const onProgress = progressFor(job);
 
     if (!prepared) {
       try {
-        prepared = await prepareRender(requestOf(job), { tools, onProgress });
+        prepared = await prepareRender(requestOf(job), { tools, onProgress, signal });
       } catch (error) {
-        failJob(job, error);
+        await endJob(job, error, signal);
         continue;
       }
     }
 
     // Пока текущая задача кодируется — готовим следующую.
-    const encoding = encodeRender(prepared, { tools, onProgress });
+    const encoding = encodeRender(prepared, { tools, onProgress, signal });
     let nextPreparing: Promise<Pretranscribed | null> | null = null;
     const next = events?.shouldPause?.() ? null : store.nextPending();
     if (next) {
-      nextPreparing = prepareRender(requestOf(next), { tools, onProgress: progressFor(next) }).then(
+      const nextSignal = events?.signalFor?.(next);
+      nextPreparing = prepareRender(requestOf(next), {
+        tools,
+        onProgress: progressFor(next),
+        signal: nextSignal,
+      }).then(
         (p) => ({ job: next, prepared: p }),
-        (error: unknown) => {
-          // Пока готовили, задачу могли отменить — её статус не трогаем.
-          if (store.get(next.id)?.status === "pending") failJob(next, error);
+        async (error: unknown) => {
+          // Пока готовили, задачу могли отменить или удалить — её статус
+          // уже выставлен снаружи, трогать его нельзя.
+          if (store.get(next.id)?.status === "pending") await endJob(next, error, nextSignal);
           return null;
         },
       );
@@ -118,7 +145,7 @@ export async function runQueue(
       summary.done++;
       events?.onJobDone?.(job, result);
     } catch (error) {
-      failJob(job, error);
+      await endJob(job, error, signal);
     }
 
     if (nextPreparing) ahead = await nextPreparing;

@@ -145,13 +145,18 @@ export function registerQueue(program: Command): void {
             progress?.finish();
             console.log(`${pc.red("✗")} failed: ${error.message.split("\n")[0]}`);
           },
+          onJobCanceled: () => {
+            progress?.finish();
+            console.log(pc.dim("− canceled"));
+          },
         });
         const elapsed = (Date.now() - started) / 1000;
         console.log(
           `\n${pc.bold("Queue finished")} in ${formatDuration(elapsed)}: ` +
-            `${summary.done} done, ${summary.failed} failed`,
+            `${summary.done} done, ${summary.failed} failed` +
+            (summary.canceled > 0 ? `, ${summary.canceled} canceled` : ""),
         );
-        if (summary.done === 0 && summary.failed === 0) {
+        if (summary.done === 0 && summary.failed === 0 && summary.canceled === 0) {
           console.log(pc.dim("nothing was pending"));
         }
       } finally {

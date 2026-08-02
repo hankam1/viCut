@@ -1,5 +1,6 @@
 import path from "node:path";
 import { app, BrowserWindow, ipcMain } from "electron";
+import { killAllChildren } from "@vicut/core";
 import { registerEngineIpc } from "./engine.js";
 import { registerUpdatesIpc } from "./updates.js";
 
@@ -68,4 +69,12 @@ void app.whenReady().then(() => {
 
 app.on("window-all-closed", () => {
   if (process.platform !== "darwin") app.quit();
+});
+
+// Выход не должен оставлять рендер жить дальше: на Windows дочерний процесс
+// переживает родителя, и закрытое приложение продолжало бы жечь CPU ffmpeg-ом.
+// Прерванная задача останется в статусе running и вернётся в очередь при
+// следующем запуске (resetInterrupted).
+app.on("before-quit", () => {
+  killAllChildren();
 });

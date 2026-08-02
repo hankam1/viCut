@@ -23,6 +23,8 @@ export interface PrestitchOptions {
   /** Аргументы видеокодека финального рендера — куски кодируются ими же. */
   encoderArgs: string[];
   onProgress?: (detail: string) => void;
+  /** Отмена: убивает текущий ffmpeg и прерывает сборку кусков. */
+  signal?: AbortSignal;
 }
 
 /**
@@ -59,13 +61,11 @@ export async function prestitchClips(options: PrestitchOptions): Promise<MediaIn
   const normalize = videoNormalizeChain(target, preset.effects.inputZoom, true);
   const pieces: string[] = [];
   const encode = async (args: string[], out: string): Promise<void> => {
-    await runFfmpeg(options.ffmpegPath, [
-      "-y",
-      ...args,
-      ...options.encoderArgs,
-      "-an",
-      out,
-    ]);
+    await runFfmpeg(
+      options.ffmpegPath,
+      ["-y", ...args, ...options.encoderArgs, "-an", out],
+      { signal: options.signal },
+    );
     pieces.push(out);
   };
 
@@ -110,9 +110,10 @@ export async function prestitchClips(options: PrestitchOptions): Promise<MediaIn
     "utf8",
   );
   const stitched = path.join(tmpDir, `stitch-${key}.mp4`);
-  await runFfmpeg(options.ffmpegPath, [
-    "-y", "-f", "concat", "-safe", "0", "-i", listPath,
-    "-c", "copy", stitched,
-  ]);
-  return probe(stitched, options.ffprobePath);
+  await runFfmpeg(
+    options.ffmpegPath,
+    ["-y", "-f", "concat", "-safe", "0", "-i", listPath, "-c", "copy", stitched],
+    { signal: options.signal },
+  );
+  return probe(stitched, options.ffprobePath, options.signal);
 }

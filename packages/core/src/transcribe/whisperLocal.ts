@@ -141,6 +141,8 @@ export interface WhisperLocalOptions {
   /** Line capacity used to regroup words into display segments. */
   maxSegmentChars?: number;
   onProgress?: (progress: TranscribeProgress) => void;
+  /** Отмена: whisper убивается, промис падает с CancelError. */
+  signal?: AbortSignal;
 }
 
 const downloadToPercent = (p: { receivedBytes: number; totalBytes: number | null }): number | null =>
@@ -180,6 +182,7 @@ export async function transcribeWhisperLocal(
         const match = /progress\s*=\s*(\d+)%/.exec(line);
         if (match) options.onProgress?.({ phase: "transcribe", percent: Number(match[1]) });
       },
+      signal: options.signal,
     },
   );
 

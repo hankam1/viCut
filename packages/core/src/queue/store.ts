@@ -178,6 +178,21 @@ export class QueueStore {
     return Number(result.changes) > 0;
   }
 
+  /**
+   * Отметить отменённой любую незавершённую задачу, включая запущенную.
+   * Сами процессы убивает тот, кто владеет её AbortController — статус в базе
+   * ставится первым, чтобы раннер не записал отмену как ошибку рендера.
+   */
+  markCanceled(id: number): boolean {
+    const result = this.db
+      .prepare(
+        `UPDATE jobs SET status = 'canceled', finished_at = datetime('now', 'localtime')
+         WHERE id = ? AND status IN ('pending', 'running')`,
+      )
+      .run(id);
+    return Number(result.changes) > 0;
+  }
+
   /** Remove a job unless it is currently running. */
   remove(id: number): boolean {
     const result = this.db

@@ -39,6 +39,8 @@ export interface ApiTranscribeOptions {
   durationSec: number;
   tmpDir: string;
   onProgress?: (progress: TranscribeProgress) => void;
+  /** Отмена: обрывает нарезку чанков и запрос к API. */
+  signal?: AbortSignal;
 }
 
 /** Transcribe a 16 kHz mono WAV via a cloud Whisper API, chunking long audio. */
@@ -60,16 +62,20 @@ export async function transcribeViaApi(
     });
 
     const mp3Path = path.join(options.tmpDir, `chunk-${i}.mp3`);
-    await run(options.ffmpegPath, [
-      "-y",
-      "-hide_banner", "-loglevel", "error",
-      "-ss", String(chunkStartSec),
-      "-t", String(CHUNK_SEC),
-      "-i", wavPath,
-      "-ac", "1",
-      "-b:a", "48k",
-      mp3Path,
-    ]);
+    await run(
+      options.ffmpegPath,
+      [
+        "-y",
+        "-hide_banner", "-loglevel", "error",
+        "-ss", String(chunkStartSec),
+        "-t", String(CHUNK_SEC),
+        "-i", wavPath,
+        "-ac", "1",
+        "-b:a", "48k",
+        mp3Path,
+      ],
+      { signal: options.signal },
+    );
 
     const form = new FormData();
     form.append("file", new Blob([await fsp.readFile(mp3Path)], { type: "audio/mpeg" }), "audio.mp3");
@@ -86,6 +92,7 @@ export async function transcribeViaApi(
       method: "POST",
       headers: { authorization: `Bearer ${options.apiKey}` },
       body: form,
+      signal: options.signal,
     });
     if (!response.ok) {
       const body = await response.text().catch(() => "");

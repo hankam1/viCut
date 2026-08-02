@@ -22,6 +22,8 @@ export interface TranscribeAudioOptions {
   maxSegmentChars?: number;
   tools: Tools;
   onProgress?: (progress: TranscribeProgress) => void;
+  /** Отмена: убивает whisper / обрывает запрос к облачному API. */
+  signal?: AbortSignal;
 }
 
 export async function resolveProvider(
@@ -61,6 +63,7 @@ export async function transcribeAudio(
         durationSec: options.durationSec,
         tmpDir,
         onProgress: options.onProgress,
+        signal: options.signal,
       });
     } finally {
       await fsp.rm(tmpDir, { recursive: true, force: true });
@@ -73,5 +76,6 @@ export async function transcribeAudio(
     wordTimestamps: options.wordTimestamps,
     maxSegmentChars: options.maxSegmentChars,
     onProgress: options.onProgress,
+    signal: options.signal,
   });
 }

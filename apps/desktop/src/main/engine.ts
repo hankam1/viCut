@@ -77,6 +77,22 @@ let tools: Tools | null = null;
 let queueRunning = false;
 let pauseRequested = false;
 
+/**
+ * Контроллер отмены на каждую задачу, за которую взялась очередь. Живёт от
+ * начала подготовки до конца кодирования: задачу готовят заранее, ещё пока
+ * кодируется предыдущая, и отменить её нужно уметь уже в этот момент.
+ */
+const cancelControllers = new Map<number, AbortController>();
+
+function signalForJob(jobId: number): AbortSignal {
+  let controller = cancelControllers.get(jobId);
+  if (!controller) {
+    controller = new AbortController();
+    cancelControllers.set(jobId, controller);
+  }
+  return controller.signal;
+}
+
 function broadcast(channel: string, payload?: unknown): void {
   for (const win of BrowserWindow.getAllWindows()) win.webContents.send(channel, payload);
 }
@@ -107,13 +123,21 @@ async function runQueueLoop(): Promise<void> {
     tools ??= await ensureTools();
     await runQueue(getStore(), tools, {
       shouldPause: () => pauseRequested,
+      signalFor: (job) => signalForJob(job.id),
       onJobStart: () => broadcast("queue:changed"),
       onJobProgress: (job, event) => broadcast("queue:job-progress", { jobId: job.id, ...event }),
       onJobDone: (job, result) => {
+        cancelControllers.delete(job.id);
         broadcast("queue:job-finished", { jobId: job.id, ok: true, srtPath: result.srtPath });
         broadcast("queue:changed");
       },
       onJobFailed: (job) => {
+        cancelControllers.delete(job.id);
+        broadcast("queue:job-finished", { jobId: job.id, ok: false });
+        broadcast("queue:changed");
+      },
+      onJobCanceled: (job) => {
+        cancelControllers.delete(job.id);
         broadcast("queue:job-finished", { jobId: job.id, ok: false });
         broadcast("queue:changed");
       },
@@ -162,12 +186,19 @@ export function registerEngineIpc(): void {
     pauseRequested = true;
   });
   ipcMain.handle("queue:is-running", () => queueRunning);
+  // Отмена работает и для запущенной задачи: статус в базе ставится первым
+  // (чтобы раннер не записал отмену как ошибку), затем abort убивает ffmpeg
+  // и whisper этой задачи. Ожидающую задачу, которую уже начали готовить
+  // заранее, тоже нужно прервать — поэтому abort зовётся в обоих случаях.
   ipcMain.handle("queue:cancel", (_event, id: number) => {
-    const changed = getStore().cancel(id);
+    const changed = getStore().markCanceled(id);
+    cancelControllers.get(id)?.abort();
     broadcast("queue:changed");
     return changed;
   });
   ipcMain.handle("queue:retry", (_event, id: number) => {
+    // Прошлый контроллер мог остаться прерванным — новая попытка берёт свежий.
+    cancelControllers.delete(id);
     const changed = getStore().retry(id);
     broadcast("queue:changed");
     void runQueueLoop();
@@ -175,6 +206,7 @@ export function registerEngineIpc(): void {
   });
   ipcMain.handle("queue:remove", (_event, id: number) => {
     const changed = getStore().remove(id);
+    if (changed) cancelControllers.delete(id);
     broadcast("queue:changed");
     return changed;
   });
